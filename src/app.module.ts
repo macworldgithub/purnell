@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { VoiceAgentModule } from './voice-agent/voice-agent.module';
 
 @Module({
-  imports: [],
+  imports: [VoiceAgentModule],
   controllers: [AppController],
   providers: [AppService],
 })
