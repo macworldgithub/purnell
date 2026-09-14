@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purnell Motors - AI Voice Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    
+    <!-- Title Header -->
+    <header class="header">
+      <h1>Purnell Motors Voice Agent</h1>
+      <p class="subtitle">Click the Play button to start the conversation</p>
+    </header>
+
+    <!-- Main Control Section: Big Play Button -->
+    <section class="controls-card">
+      <button id="playBtn" class="play-button">
+        <svg id="playIcon" class="btn-icon" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <span id="playBtnText">Start Voice Agent</span>
+      </button>
+
+      <div id="statusBadge" class="status-badge idle">
+        <span class="status-dot"></span>
+        <span id="statusText">Ready to start</span>
+      </div>
+    </section>
+
+    <!-- Scrollable Transcript Feed (Below the button) -->
+    <section class="transcript-section">
+      <div class="transcript-header">
+        <h2>Conversation Transcript</h2>
+        <button id="clearBtn" class="clear-btn">Clear Log</button>
+      </div>
+
+      <div id="transcriptBox" class="transcript-box">
+        <div class="placeholder-text" id="placeholder">
+          Click "Start Voice Agent" above to initiate the call...
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

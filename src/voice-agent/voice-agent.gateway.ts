@@ -13,15 +13,14 @@ import { VoiceAgentService } from './voice-agent.service';
 
 @WebSocketGateway({ path: '/voice', cors: { origin: '*' } })
 export class VoiceAgentGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+  implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(VoiceAgentGateway.name);
   private clientSessionMap = new Map<WebSocket, string>();
 
-  constructor(private readonly voiceAgentService: VoiceAgentService) {}
+  constructor(private readonly voiceAgentService: VoiceAgentService) { }
 
   async handleConnection(client: WebSocket) {
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -69,15 +68,37 @@ export class VoiceAgentGateway
         },
       });
 
+      const greetingText =
+        'Welcome to Purnell Motors! I am your AI receptionist. How can I assist you with your vehicle today?';
+
       // Send session readiness message
       this.sendJson(client, {
         event: 'session_ready',
         data: {
           sessionId,
-          greeting: 'Good morning, Purnell Motors — how can I help you today?',
+          greeting: greetingText,
           stt: 'Deepgram Nova-2 (real-time stream)',
           brain: 'OpenAI gpt-realtime-2 (with Pentana lookup & prompt data)',
           tts: 'ElevenLabs eleven_flash_v2_5 (PCM 16kHz with instant barge-in interrupt)',
+        },
+      });
+
+      // Trigger backend voice pipeline for initial greeting
+      void this.voiceAgentService.sendInitialGreeting(sessionId, {
+        onAiReply: (text: string, toolLogs?: string[]) => {
+          this.sendJson(client, {
+            event: 'ai_reply',
+            data: { text, toolLogs },
+          });
+        },
+        onAudioChunk: (chunk: Buffer) => {
+          this.sendJson(client, {
+            event: 'audio_chunk',
+            data: {
+              chunk: chunk.toString('base64'),
+              format: 'pcm_16000',
+            },
+          });
         },
       });
     } catch (error) {

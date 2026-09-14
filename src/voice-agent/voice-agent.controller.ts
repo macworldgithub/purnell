@@ -89,6 +89,7 @@ export class VoiceAgentController {
       response: result.text,
       toolLogs: result.toolLogs || [],
       hasAudio: Boolean(result.audioBuffer),
+      audioBuffer: result.audioBuffer,
     };
   }
 }

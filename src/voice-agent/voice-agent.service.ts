@@ -117,6 +117,55 @@ export class VoiceAgentService {
   }
 
   /**
+   * Triggers initial backend voice agent greeting & audio stream for a new session
+   */
+  async sendInitialGreeting(
+    sessionId: string,
+    callbacks: {
+      onAiReply: (text: string, toolLogs?: string[]) => void;
+      onAudioChunk: (chunk: Buffer) => void;
+    },
+  ): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    const greetingText =
+      'Welcome to Purnell Motors! I am your AI receptionist. How can I assist you with your vehicle today?';
+
+    if (session) {
+      session.history.push({ role: 'assistant', content: greetingText });
+    }
+
+    callbacks.onAiReply(greetingText);
+
+    try {
+      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const thisTurnId = session ? ++session.currentTurnId : 1;
+        const abortController = new AbortController();
+        if (session) {
+          session.activeAbortController = abortController;
+          session.isSpeaking = true;
+        }
+
+        await this.elevenLabsService.streamSpeech(
+          greetingText,
+          (chunk) => {
+            if (!abortController.signal.aborted) {
+              callbacks.onAudioChunk(chunk);
+            }
+          },
+          abortController.signal,
+        );
+
+        if (session && session.currentTurnId === thisTurnId) {
+          session.isSpeaking = false;
+          session.activeAbortController = null;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Initial greeting TTS failed: ${String(err)}`);
+    }
+  }
+
+  /**
    * Immediately aborts active voice agent speech when the caller interrupts
    */
   private handleBargeIn(

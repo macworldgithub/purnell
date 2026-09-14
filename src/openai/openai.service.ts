@@ -28,87 +28,74 @@ export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
   private readonly config: OpenAiBrainConfig = VOICE_AGENT_CONFIG.openai;
   private readonly openai: OpenAI;
-  private formattedSystemPrompt: string = '';
+  private cachedSystemPrompt: string = '';
 
   constructor(private readonly pentanaService: PentanaService) {
     this.openai = new OpenAI({
       apiKey: this.config.apiKey,
     });
-    this.loadAndFormatSystemPrompt();
+    this.loadSystemPromptAndKB();
     this.logger.log(
       `OpenAI Brain Service initialized (Model: ${this.config.model})`,
     );
   }
 
   /**
-   * Loads System Prompt.md and KB.md from project root and compiles a structured prompt
+   * Reads System Prompt.md and KB.md from project root and combines them into OpenAI system instructions
    */
-  public loadAndFormatSystemPrompt(): string {
+  public loadSystemPromptAndKB(): string {
     try {
       const rootDir = process.cwd();
       const systemPromptPath = path.join(rootDir, 'System Prompt.md');
       const kbPath = path.join(rootDir, 'KB.md');
 
-      let systemPromptContent = '';
-      let kbContent = '';
+      let systemPromptText = '';
+      let kbText = '';
 
       if (fs.existsSync(systemPromptPath)) {
-        systemPromptContent = fs.readFileSync(systemPromptPath, 'utf8');
+        systemPromptText = fs.readFileSync(systemPromptPath, 'utf8');
+      } else {
+        this.logger.warn(`System Prompt file not found at ${systemPromptPath}`);
       }
+
       if (fs.existsSync(kbPath)) {
-        kbContent = fs.readFileSync(kbPath, 'utf8');
+        kbText = fs.readFileSync(kbPath, 'utf8');
+      } else {
+        this.logger.warn(`Knowledge Base file not found at ${kbPath}`);
       }
 
-      this.formattedSystemPrompt = `
-You are the AI Receptionist for Purnell Motors Pty Ltd, a luxury automotive dealership in Blakehurst, NSW, representing Jaguar Land Rover (JLR) and INEOS / Jaecoo (JQ) brands.
+      this.cachedSystemPrompt = `
+===============================================================================
+SYSTEM PROMPT INSTRUCTIONS
+===============================================================================
+${systemPromptText.trim()}
 
-### OPERATIONAL CORE & TONE
-- Tone: Professional, calm, warm, and knowledgeable — luxury automotive standard. Australian English. Never robotic, rushed, or dismissive.
-- Voice Cadence: Concise, helpful, composed (Australian accent nuances respected).
-- Interruption Behavior: When a caller interrupts or changes the topic mid-sentence, acknowledge their new input naturally and immediately answer their new query.
-- Real-time VAD parameters active: 0.7 threshold, 300ms prefix padding, 1000ms silence duration, 500ms barge-in grace window.
-
-### CRITICAL RULES (NEVER VIOLATE)
-1. **Real Data Only**: Never invent service slots, fitment times, staff availability, stock presence, loan cars, or parts status.
-2. **Do Not Transact**: Never quote drive-away prices, finance rates, parts prices, deposit amounts, settlement figures, or bank details.
-3. **Be Honest About People**: If a staff member is not confirmed available, create a 10–30 min callback with accurate ownership.
-4. **Safety Overrides Convenience**: If a caller reports driving danger (smoke, warning light, rattle), tell them to pull over safely immediately and give:
-   - Land Rover / Range Rover / Defender / INEOS: 1800 808 180
-   - Jaguar: 1800 819 181
-5. **Brand & Site Routing**:
-   - Jaecoo / JQ / INEOS Grenadier: 996 King Georges Road
-   - Jaguar / Land Rover / Range Rover / Defender: 990 King Georges Road
-6. **Trading Hours**:
-   - Mon–Sat: Open until 5:00 PM (Last test drive 4:00 PM).
-   - Saturday/After-hours service bookings: Collect details only; advise service team will call Monday.
-   - Sunday: Fully closed.
-7. **Simulated Pentana Lookups**: In testing mode, output simulated lookup blocks when accessing data:
-   [PENTANA LOOKUP — simulated]
-
-### SYSTEM PROMPT REFERENCE:
-${systemPromptContent}
-
-### KNOWLEDGE BASE REFERENCE:
-${kbContent}
+===============================================================================
+KNOWLEDGE BASE (KB) INSTRUCTIONS
+===============================================================================
+${kbText.trim()}
       `.trim();
 
-      return this.formattedSystemPrompt;
+      this.logger.log(
+        `System Prompt and KB loaded successfully (${this.cachedSystemPrompt.length} chars)`,
+      );
+      return this.cachedSystemPrompt;
     } catch (error: unknown) {
-      this.logger.error('Failed to load system prompt / KB files', error);
-      this.formattedSystemPrompt =
+      this.logger.error('Error loading System Prompt / KB files:', error);
+      this.cachedSystemPrompt =
         'You are the AI Receptionist for Purnell Motors Pty Ltd.';
-      return this.formattedSystemPrompt;
+      return this.cachedSystemPrompt;
     }
   }
 
   /**
-   * Returns current formatted system prompt
+   * Returns current System Prompt + Knowledge Base
    */
   getSystemPrompt(): string {
-    if (!this.formattedSystemPrompt) {
-      return this.loadAndFormatSystemPrompt();
+    if (!this.cachedSystemPrompt) {
+      return this.loadSystemPromptAndKB();
     }
-    return this.formattedSystemPrompt;
+    return this.cachedSystemPrompt;
   }
 
   /**
