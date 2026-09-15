@@ -9,6 +9,8 @@ import {
 import { PentanaService } from '../pentana/pentana.service';
 import { AppointmentSlot } from '../pentana/pentana.data';
 
+import { CustomerDatabaseService } from '../customer-database/customer-database.service';
+
 interface LookupCustomerArgs {
   query?: string;
 }
@@ -30,9 +32,12 @@ export class OpenAiService {
   private readonly openai: OpenAI;
   private cachedSystemPrompt: string = '';
 
-  constructor(private readonly pentanaService: PentanaService) {
+  constructor(
+    private readonly pentanaService: PentanaService,
+    private readonly customerDatabaseService: CustomerDatabaseService,
+  ) {
     this.openai = new OpenAI({
-      apiKey: this.config.apiKey,
+      apiKey: process.env.OPENAI_API_KEY || '',
     });
     this.loadSystemPromptAndKB();
     this.logger.log(
@@ -218,23 +223,77 @@ ${kbText.trim()}
   }
 
   /**
-   * Execute tool call locally against Pentana service
+   * Execute tool call locally against CustomerDatabaseService (MongoDB) and PentanaService
    */
-  executeToolCall(name: string, args: Record<string, unknown>): string {
+  async executeToolCall(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
     switch (name) {
       case 'lookupPentanaCustomer': {
         const payload = args as LookupCustomerArgs;
         const query = typeof payload.query === 'string' ? payload.query : '';
+
+        // 1. Try CustomerDatabaseService (MongoDB Atlas)
+        const profile =
+          await this.customerDatabaseService.getFullCustomerProfile(query);
+        if (profile && profile.customer) {
+          const c = profile.customer;
+          const v =
+            c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+          const vDesc = v
+            ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (Rego: ${v.rego || ''})`.trim()
+            : 'Vehicle on file';
+          const ro =
+            profile.repair_orders && profile.repair_orders.length > 0
+              ? profile.repair_orders[0]
+              : null;
+          const bk =
+            profile.service_bookings && profile.service_bookings.length > 0
+              ? profile.service_bookings[0]
+              : null;
+          const pt =
+            profile.parts_orders && profile.parts_orders.length > 0
+              ? profile.parts_orders[0]
+              : null;
+          const ptDesc =
+            pt && pt.lines && pt.lines.length > 0
+              ? `${pt.parts_order_id} (${pt.lines[0].description || 'Parts'} — ${pt.lines[0].status || 'Ordered'})`
+              : pt
+                ? pt.parts_order_id
+                : 'None';
+
+          const log = `[PENTANA / DMS LOOKUP]\n✓ Record found in Pentana CRM for "${query}":\nCustomer: ${c.customer_name} (ID: ${c.customer_id})\nVehicle: ${vDesc}\nOpen RO: ${ro ? `RO #${ro.ro_number} (${ro.status} — Advisor: ${ro.advisor})` : 'None'}\nUpcoming Booking: ${bk ? `${bk.date} at ${bk.time} (${bk.job_type})` : 'None'}\nParts Order: ${ptDesc}`;
+
+          return JSON.stringify({
+            found: true,
+            simulatedLog: log,
+            customer: {
+              customer_id: c.customer_id,
+              customer_name: c.customer_name,
+              preferred_name: c.preferred_name,
+              mobile: c.mobile,
+              landline: c.landline,
+              vehicles: c.vehicles,
+              repair_orders: profile.repair_orders,
+              service_bookings: profile.service_bookings,
+              parts_orders: profile.parts_orders,
+              authorised_contacts: profile.authorised_contacts,
+            },
+          });
+        }
+
+        // 2. Fallback to static mock data in PentanaService
         const customer = this.pentanaService.searchCustomer(query);
         if (!customer) {
           return JSON.stringify({
             found: false,
-            message: `[PENTANA LOOKUP — simulated]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana.`,
+            message: `[PENTANA LOOKUP]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana CRM.`,
           });
         }
         return JSON.stringify({
           found: true,
-          simulatedLog: `[PENTANA LOOKUP — simulated]\nSearching customer records for query: ${query}...\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
+          simulatedLog: `[PENTANA LOOKUP]\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
           customer,
         });
       }
@@ -293,14 +352,20 @@ ${kbText.trim()}
   }
 
   /**
-   * Generates AI brain text response given conversation history
+   * Generates AI brain text response given conversation history and verified caller context
    */
   async generateResponse(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    customerContext?: string,
   ): Promise<{ text: string; toolLogs?: string[] }> {
+    let systemPromptContent = this.getSystemPrompt();
+    if (customerContext) {
+      systemPromptContent += `\n\n===============================================================================\nCURRENT INBOUND CALLER CONTEXT (INJECTED BY CRM):\n${customerContext}\n===============================================================================`;
+    }
+
     const systemMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
       role: 'system',
-      content: this.getSystemPrompt(),
+      content: systemPromptContent,
     };
 
     const fullMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -331,7 +396,7 @@ ${kbText.trim()}
           const toolArgs = JSON.parse(
             toolCall.function.arguments || '{}',
           ) as Record<string, unknown>;
-          const toolResult = this.executeToolCall(toolName, toolArgs);
+          const toolResult = await this.executeToolCall(toolName, toolArgs);
 
           try {
             const parsed = JSON.parse(toolResult) as ParsedToolResult;

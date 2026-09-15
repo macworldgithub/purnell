@@ -18,6 +18,7 @@ function normalizeAustralianPhone(input) {
 class SimpleVoiceAgent {
   constructor() {
     this.isCallActive = false;
+    this.isAgentSpeaking = false;
     this.ws = null;
     this.wsConnected = false;
     this.wsTimeout = null;
@@ -257,10 +258,43 @@ class SimpleVoiceAgent {
 
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = true;
-    this.recognition.interimResults = false;
+    this.recognition.interimResults = true;
     this.recognition.lang = 'en-AU';
 
+    // Immediate acoustic barge-in triggers when caller speaks
+    this.recognition.onspeechstart = () => {
+      if (this.isAgentSpeaking) {
+        this.stopAudio();
+        if (this.ws && this.wsConnected) {
+          try {
+            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
+          } catch (e) {}
+        }
+      }
+    };
+
+    this.recognition.onsoundstart = () => {
+      if (this.isAgentSpeaking) {
+        this.stopAudio();
+        if (this.ws && this.wsConnected) {
+          try {
+            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
+          } catch (e) {}
+        }
+      }
+    };
+
     this.recognition.onresult = (event) => {
+      // If user starts speaking while agent is talking, interrupt immediately
+      if (this.isAgentSpeaking) {
+        this.stopAudio();
+        if (this.ws && this.wsConnected) {
+          try {
+            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
+          } catch (e) {}
+        }
+      }
+
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
           const spokenText = event.results[i][0].transcript.trim();
@@ -407,11 +441,15 @@ class SimpleVoiceAgent {
     source.start(this.nextAudioStartTime);
     this.nextAudioStartTime += audioBuffer.duration;
     this.activeAudioSources.push(source);
+    this.isAgentSpeaking = true;
 
     source.onended = () => {
       const idx = this.activeAudioSources.indexOf(source);
       if (idx !== -1) {
         this.activeAudioSources.splice(idx, 1);
+      }
+      if (this.activeAudioSources.length === 0) {
+        this.isAgentSpeaking = false;
       }
     };
   }
@@ -428,10 +466,18 @@ class SimpleVoiceAgent {
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-AU';
+    this.isAgentSpeaking = true;
+    utterance.onend = () => {
+      this.isAgentSpeaking = false;
+    };
+    utterance.onerror = () => {
+      this.isAgentSpeaking = false;
+    };
     window.speechSynthesis.speak(utterance);
   }
 
   stopAudio() {
+    this.isAgentSpeaking = false;
     for (const src of this.activeAudioSources) {
       try {
         src.stop();

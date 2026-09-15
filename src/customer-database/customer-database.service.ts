@@ -47,18 +47,34 @@ export class CustomerDatabaseService {
    * Find customer by customer_id, phone, name, or vehicle rego
    */
   async findCustomer(query: string): Promise<Customer | null> {
+    if (!query || typeof query !== 'string') return null;
     const qTrimmed = query.trim();
-    const normalizedPhone = normalizeAustralianPhone(qTrimmed);
-    const cleanDigits = qTrimmed.replace(/[^0-9]/g, '');
+    if (!qTrimmed) return null;
 
-    // Try direct customer_id match
+    // Clean common conversational prefixes like "My name is...", "Rego is..."
+    const cleanPhrase = qTrimmed
+      .replace(
+        /^(my name is|i am|it's|this is|rego is|registration is|the rego is|my vehicle is|my car is|licence is|name is|calling about)\s+/i,
+        '',
+      )
+      .replace(/[?.!,]/g, '')
+      .trim();
+
+    const normalizedPhone =
+      normalizeAustralianPhone(cleanPhrase) ||
+      normalizeAustralianPhone(qTrimmed);
+    const cleanDigits = cleanPhrase.replace(/[^0-9]/g, '');
+    const cleanAlphanumeric = cleanPhrase
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase();
+
+    // 1. Try direct customer_id match
     let customer = await this.customerModel
-      .findOne({ customer_id: qTrimmed.toUpperCase() })
+      .findOne({ customer_id: cleanPhrase.toUpperCase() })
       .lean();
-
     if (customer) return customer;
 
-    // Try normalized phone match first
+    // 2. Try normalized phone match
     if (normalizedPhone) {
       customer = await this.customerModel
         .findOne({
@@ -68,11 +84,10 @@ export class CustomerDatabaseService {
           ],
         })
         .lean();
-
       if (customer) return customer;
     }
 
-    // Try digit substring match if query contains numbers
+    // 3. Try digit substring match if query contains numbers (6+ digits)
     if (cleanDigits.length >= 6) {
       customer = await this.customerModel
         .findOne({
@@ -82,22 +97,47 @@ export class CustomerDatabaseService {
           ],
         })
         .lean();
-
       if (customer) return customer;
     }
 
-    // Try vehicle rego or customer name match
+    // 4. Try vehicle rego match (cleanAlphanumeric e.g. CF62ZZ or cleanPhrase)
+    if (cleanAlphanumeric.length >= 3) {
+      customer = await this.customerModel
+        .findOne({
+          'vehicles.rego': { $regex: cleanAlphanumeric, $options: 'i' },
+        })
+        .lean();
+      if (customer) return customer;
+    }
+
+    // 5. Try customer name, preferred name, or vehicle rego
     customer = await this.customerModel
       .findOne({
         $or: [
-          { customer_name: { $regex: qTrimmed, $options: 'i' } },
-          { preferred_name: { $regex: qTrimmed, $options: 'i' } },
-          { 'vehicles.rego': { $regex: qTrimmed, $options: 'i' } },
+          { customer_name: { $regex: cleanPhrase, $options: 'i' } },
+          { preferred_name: { $regex: cleanPhrase, $options: 'i' } },
+          { 'vehicles.rego': { $regex: cleanPhrase, $options: 'i' } },
         ],
       })
       .lean();
+    if (customer) return customer;
 
-    return customer;
+    // 6. Token search (if user provided full name or sentence with multiple words)
+    const words = cleanPhrase.split(/\s+/).filter((w) => w.length >= 3);
+    for (const word of words) {
+      customer = await this.customerModel
+        .findOne({
+          $or: [
+            { customer_name: { $regex: word, $options: 'i' } },
+            { preferred_name: { $regex: word, $options: 'i' } },
+            { 'vehicles.rego': { $regex: word, $options: 'i' } },
+          ],
+        })
+        .lean();
+      if (customer) return customer;
+    }
+
+    return null;
   }
 
   /**

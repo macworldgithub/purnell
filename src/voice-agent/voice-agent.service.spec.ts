@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { VoiceAgentService } from './voice-agent.service';
-import { VoiceAgentModule } from './voice-agent.module';
 import { PentanaService } from '../pentana/pentana.service';
+import { DeepgramService } from '../deepgram/deepgram.service';
+import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
+import { OpenAiService } from '../openai/openai.service';
+import { CustomerDatabaseService } from '../customer-database/customer-database.service';
 import { ROADSIDE_ASSISTANCE, SITE_ROUTING } from '../pentana/pentana.data';
 
 describe('VoiceAgentModule & Interruption Handling Tests', () => {
@@ -10,7 +13,37 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      imports: [VoiceAgentModule],
+      providers: [
+        VoiceAgentService,
+        PentanaService,
+        {
+          provide: DeepgramService,
+          useValue: {
+            createLiveTranscriptionSession: jest.fn(),
+          },
+        },
+        {
+          provide: ElevenLabsService,
+          useValue: {
+            generateSpeechBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
+            streamSpeech: jest.fn(),
+          },
+        },
+        {
+          provide: OpenAiService,
+          useValue: {
+            generateResponse: jest.fn().mockResolvedValue({ text: 'Hello' }),
+            getSystemPrompt: jest.fn().mockReturnValue('You are the Purnell virtual receptionist. Purnell Motors Pty Ltd. Blakehurst, NSW. 1800 808 180, 1800 819 181. 996 King Georges Road, 990 King Georges Road. [PENTANA LOOKUP — simulated]'),
+          },
+        },
+        {
+          provide: CustomerDatabaseService,
+          useValue: {
+            findCustomer: jest.fn().mockResolvedValue(null),
+            getFullCustomerProfile: jest.fn().mockResolvedValue(null),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<VoiceAgentService>(VoiceAgentService);
@@ -35,7 +68,7 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
 
     it('should have exact OpenAI VAD & brain parameters', () => {
       const config = service.getConfig();
-      expect(config.openai.model).toBe('gpt-realtime-2');
+      expect(config.openai.model).toBe('gpt-4o-mini');
       expect(config.openai.vad.threshold).toBe(0.7);
       expect(config.openai.vad.prefix_padding_ms).toBe(300);
       expect(config.openai.vad.silence_duration_ms).toBe(1000);
@@ -44,7 +77,7 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
 
     it('should have exact Deepgram STT settings', () => {
       const config = service.getConfig();
-      expect(config.deepgram.model).toBe('nova-2');
+      expect(config.deepgram.model).toBe('nova-3');
       expect(config.deepgram.language).toBe('en');
       expect(config.deepgram.encoding).toBe('linear16');
       expect(config.deepgram.sample_rate).toBe(16000);

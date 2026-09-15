@@ -18,7 +18,10 @@ import {
   AppointmentSlot,
 } from '../pentana/pentana.data';
 
-import { CustomerDatabaseService } from '../customer-database/customer-database.service';
+import {
+  CustomerDatabaseService,
+  FullCustomerProfile,
+} from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
 
 export interface ConversationTurn {
@@ -28,6 +31,8 @@ export interface ConversationTurn {
 
 export interface VoiceAgentSession {
   sessionId: string;
+  cli?: string;
+  customerProfile?: FullCustomerProfile | null;
   history: ConversationTurn[];
   deepgramSession: DeepgramLiveSession | null;
   isSpeaking: boolean;
@@ -63,6 +68,83 @@ export class VoiceAgentService {
    */
   getFormattedSystemPrompt(): string {
     return this.openAiService.getSystemPrompt();
+  }
+
+  /**
+   * Helper to format verified customer context for OpenAI system prompt injection
+   */
+  formatCustomerContextForPrompt(
+    profile?: FullCustomerProfile | null,
+    cli?: string,
+  ): string {
+    if (!profile || !profile.customer) {
+      return [
+        'CALLER IDENTIFICATION STATUS: Unidentified / Ambiguous',
+        `INCOMING PHONE (CLI): ${cli || 'Unknown'}`,
+        'INSTRUCTION: If caller states their name, vehicle registration plate, or phone number, use the "lookupPentanaCustomer" tool to fetch their full record from Pentana.',
+      ].join('\n');
+    }
+
+    const c = profile.customer;
+    const vehicles = (c.vehicles || [])
+      .map(
+        (v) =>
+          `- ${v.year || ''} ${v.make || ''} ${v.model || ''} (Rego: ${v.rego || 'N/A'}, VIN: ${v.vin || 'N/A'}, Colour: ${v.colour || 'N/A'})`,
+      )
+      .join('\n  ');
+
+    const ros = (profile.repair_orders || [])
+      .map(
+        (ro) =>
+          `- RO #${ro.ro_number}: Rego ${ro.vehicle_rego} | Status: "${ro.status}" | Advisor: ${ro.advisor} | Drop-off: ${ro.drop_off_date} | Ready for Collection: ${ro.ready_for_collection ? 'YES' : 'NO'} | Awaiting Approval: ${ro.awaiting_approval ? 'YES' : 'NO'}`,
+      )
+      .join('\n  ');
+
+    const bookings = (profile.service_bookings || [])
+      .map(
+        (bk) =>
+          `- Booking on ${bk.date} at ${bk.time} (${bk.job_type}) with Advisor ${bk.advisor} (Rego: ${bk.vehicle_rego || 'On file'})`,
+      )
+      .join('\n  ');
+
+    const parts = (profile.parts_orders || [])
+      .map((pt) => {
+        const lineDesc =
+          pt.lines && pt.lines.length > 0
+            ? pt.lines.map((l) => `${l.description || 'Part'} (Status: ${l.status}, Arrived: ${l.arrived ? 'YES' : 'NO'})`).join(', ')
+            : 'Parts on order';
+        return `- Parts Order #${pt.parts_order_id} (RO: ${pt.ro_number || 'N/A'}, Rego: ${pt.vehicle_rego}): ${lineDesc}`;
+      })
+      .join('\n  ');
+
+    const contacts = profile.authorised_contacts
+      ? (profile.authorised_contacts.authorised_third_parties || [])
+          .map(
+            (ct) =>
+              `- ${ct.name} (${ct.relationship}): ${ct.mobile} [Authorised for: ${(ct.authorised_for || []).join(', ') || 'General'}]`,
+          )
+          .join('\n  ')
+      : 'None listed';
+
+    const primaryVehicle = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+
+    return [
+      'CALLER IDENTIFICATION STATUS: VERIFIED / HIGH CONFIDENCE',
+      `CUSTOMER ID: ${c.customer_id}`,
+      `CUSTOMER NAME: ${c.customer_name} (Preferred: ${c.preferred_name || c.customer_name})`,
+      `MOBILE: ${c.mobile || 'N/A'} | LANDLINE: ${c.landline || 'N/A'}`,
+      `ASSIGNED SERVICE ADVISOR: ${primaryVehicle?.assigned_advisor || 'Service Team'}`,
+      `ASSIGNED SALES CONSULTANT: ${primaryVehicle?.assigned_sales || 'Sales Team'}`,
+      `REGISTERED VEHICLES:\n  ${vehicles || 'None listed'}`,
+      `OPEN REPAIR ORDERS (RO):\n  ${ros || 'No open repair orders'}`,
+      `UPCOMING SERVICE BOOKINGS:\n  ${bookings || 'No upcoming bookings'}`,
+      `PARTS ORDERS:\n  ${parts || 'No parts orders on file'}`,
+      `AUTHORISED CONTACTS:\n  ${contacts}`,
+      'OPERATIONAL INSTRUCTIONS:',
+      '1. You already have this client verified in CRM memory across all turns. NEVER lose or forget this context.',
+      '2. Answer inquiries about vehicle status, service bookings, parts, and advisors directly using the above data.',
+      '3. Be natural, concise, and professional. Confirm name and clarify requests without reciting the whole database at once.',
+    ].join('\n');
   }
 
   /**
@@ -121,7 +203,7 @@ export class VoiceAgentService {
   }
 
   /**
-   * Triggers initial backend voice agent 2-phase greeting & audio stream for a new session
+   * Triggers initial backend voice agent greeting & audio stream for a new session
    */
   async sendInitialGreeting(
     sessionId: string,
@@ -135,105 +217,58 @@ export class VoiceAgentService {
     const normalizedCli = normalizeAustralianPhone(cli || '');
     const displayCli = normalizedCli || 'your number';
 
-    // Phase 1: State incoming phone number and announce lookup pause
-    const step1Text = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. Please give me a moment while I fetch your details...`;
-
-    if (session) {
-      session.history.push({ role: 'assistant', content: step1Text });
-    }
-    callbacks.onAiReply(step1Text);
-
-    try {
-      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const turnId1 = session ? ++session.currentTurnId : 1;
-        const abortCtrl1 = new AbortController();
-        if (session) {
-          session.activeAbortController = abortCtrl1;
-          session.isSpeaking = true;
-        }
-
-        await this.elevenLabsService.streamSpeech(
-          step1Text,
-          (chunk) => {
-            if (!abortCtrl1.signal.aborted) {
-              callbacks.onAudioChunk(chunk);
-            }
-          },
-          abortCtrl1.signal,
-        );
-
-        if (session && session.currentTurnId === turnId1) {
-          session.isSpeaking = false;
-          session.activeAbortController = null;
-        }
-      }
-    } catch (err) {
-      this.logger.warn(`Phase 1 greeting TTS failed: ${String(err)}`);
-    }
-
-    // Phase 2: Query MongoDB Atlas for complete connected profile
-    let step2Text = '';
+    // Lookup customer profile in MongoDB Atlas
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
           normalizedCli,
         )
       : null;
 
+    if (session) {
+      session.cli = normalizedCli;
+      session.customerProfile = profile;
+    }
+
+    let greetingText = '';
     if (profile && profile.customer) {
       const c = profile.customer;
-      const v = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
-      const vehicleDesc = v
-        ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (${v.rego || ''})`.trim()
-        : 'your vehicle';
-
-      let openActivityStr = '';
-      if (profile.repair_orders && profile.repair_orders.length > 0) {
-        const ro = profile.repair_orders[0];
-        openActivityStr = `I see open Repair Order ${ro.ro_number} with status "${ro.status}". `;
-      } else if (
-        profile.service_bookings &&
-        profile.service_bookings.length > 0
-      ) {
-        const bk = profile.service_bookings[0];
-        openActivityStr = `You have an upcoming service booking on ${bk.date} at ${bk.time}. `;
-      }
-
-      step2Text = `Thank you for waiting. I can see this number is registered to ${c.customer_name} for your ${vehicleDesc}. ${openActivityStr}How can I assist you with your vehicle today?`;
+      const preferred = c.preferred_name || c.customer_name;
+      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${displayCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
-      step2Text = `Thank you for waiting. I don't see an existing customer record registered under this number. Are you an existing client, or looking to make a new enquiry today?`;
+      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
     }
 
     if (session) {
-      session.history.push({ role: 'assistant', content: step2Text });
+      session.history.push({ role: 'assistant', content: greetingText });
     }
-    callbacks.onAiReply(step2Text);
+    callbacks.onAiReply(greetingText);
 
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const turnId2 = session ? ++session.currentTurnId : 2;
-        const abortCtrl2 = new AbortController();
+        const turnId = session ? ++session.currentTurnId : 1;
+        const abortCtrl = new AbortController();
         if (session) {
-          session.activeAbortController = abortCtrl2;
+          session.activeAbortController = abortCtrl;
           session.isSpeaking = true;
         }
 
         await this.elevenLabsService.streamSpeech(
-          step2Text,
+          greetingText,
           (chunk) => {
-            if (!abortCtrl2.signal.aborted) {
+            if (!abortCtrl.signal.aborted) {
               callbacks.onAudioChunk(chunk);
             }
           },
-          abortCtrl2.signal,
+          abortCtrl.signal,
         );
 
-        if (session && session.currentTurnId === turnId2) {
+        if (session && session.currentTurnId === turnId) {
           session.isSpeaking = false;
           session.activeAbortController = null;
         }
       }
     } catch (err) {
-      this.logger.warn(`Phase 2 greeting TTS failed: ${String(err)}`);
+      this.logger.warn(`Initial greeting TTS failed: ${String(err)}`);
     }
   }
 
@@ -249,32 +284,18 @@ export class VoiceAgentService {
     const displayCli = normalizedCli || 'your number';
 
     const profile = normalizedCli
-      ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
+      ? await this.customerDatabaseService.getFullCustomerProfile(
+          normalizedCli,
+        )
       : null;
 
     let greetingText = '';
     if (profile && profile.customer) {
       const c = profile.customer;
-      const v = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
-      const vehicleDesc = v
-        ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (${v.rego || ''})`.trim()
-        : 'your vehicle';
-
-      let openActivityStr = '';
-      if (profile.repair_orders && profile.repair_orders.length > 0) {
-        const ro = profile.repair_orders[0];
-        openActivityStr = `I see open Repair Order ${ro.ro_number} with status "${ro.status}". `;
-      } else if (
-        profile.service_bookings &&
-        profile.service_bookings.length > 0
-      ) {
-        const bk = profile.service_bookings[0];
-        openActivityStr = `You have an upcoming service booking on ${bk.date} at ${bk.time}. `;
-      }
-
-      greetingText = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. I can see this number is registered to ${c.customer_name} for your ${vehicleDesc}. ${openActivityStr}How can I assist you with your vehicle today?`;
+      const preferred = c.preferred_name || c.customer_name;
+      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${displayCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
-      greetingText = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. I don't see an existing customer record registered under this number. Are you an existing client, or looking to make a new enquiry today?`;
+      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
     }
 
     let audioBase64: string | undefined;
@@ -348,16 +369,25 @@ export class VoiceAgentService {
   ): Promise<void> {
     session.history.push({ role: 'user', content: userText });
 
-    // Call OpenAI brain with updated history
+    // Build messages from history
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
       session.history.map((m) => ({
         role: m.role,
         content: m.content,
       }));
 
+    // Inject verified caller context into OpenAI system prompt
+    const customerContext = this.formatCustomerContextForPrompt(
+      session.customerProfile,
+      session.cli,
+    );
+
     try {
       const { text: aiReply, toolLogs } =
-        await this.openAiService.generateResponse(messages);
+        await this.openAiService.generateResponse(
+          messages,
+          customerContext,
+        );
       session.history.push({ role: 'assistant', content: aiReply });
 
       callbacks.onAiReply(aiReply, toolLogs);
@@ -404,7 +434,20 @@ export class VoiceAgentService {
   async processTextMessage(
     userText: string,
     history: ConversationTurn[] = [],
+    cli: string = '',
   ): Promise<{ text: string; toolLogs?: string[]; audioBuffer?: string }> {
+    const normalizedCli = normalizeAustralianPhone(cli || '');
+    const profile = normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(
+          normalizedCli,
+        )
+      : null;
+
+    const customerContext = this.formatCustomerContextForPrompt(
+      profile,
+      normalizedCli,
+    );
+
     const fullHistory: ConversationTurn[] = [
       ...history,
       { role: 'user', content: userText },
@@ -415,7 +458,10 @@ export class VoiceAgentService {
         content: m.content,
       }));
 
-    const result = await this.openAiService.generateResponse(messages);
+    const result = await this.openAiService.generateResponse(
+      messages,
+      customerContext,
+    );
 
     let audioBase64: string | undefined;
     try {

@@ -93,10 +93,12 @@ export class VoiceAgentController {
   async testChat(
     @Body('message') message: string,
     @Body('history') history?: ConversationTurn[],
+    @Body('cli') cli?: string,
   ) {
     const result = await this.voiceAgentService.processTextMessage(
       message,
       history || [],
+      cli || '',
     );
     return {
       success: true,
