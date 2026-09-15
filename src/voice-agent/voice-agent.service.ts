@@ -24,6 +24,18 @@ import {
 } from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
 
+function formatPhoneForSpeech(phone: string): string {
+  if (!phone) return 'your number';
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('61') && digits.length >= 10) {
+    digits = '0' + digits.slice(2);
+  }
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  return phone;
+}
+
 export interface ConversationTurn {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -215,8 +227,6 @@ export class VoiceAgentService {
   ): Promise<void> {
     const session = this.activeSessions.get(sessionId);
     const normalizedCli = normalizeAustralianPhone(cli || '');
-    const displayCli = normalizedCli || 'your number';
-
     // Lookup customer profile in MongoDB Atlas
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
@@ -229,11 +239,13 @@ export class VoiceAgentService {
       session.customerProfile = profile;
     }
 
+    const spokenCli = formatPhoneForSpeech(cli || normalizedCli);
+
     let greetingText = '';
     if (profile && profile.customer) {
       const c = profile.customer;
       const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${displayCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
+      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${spokenCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
       greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
     }
@@ -289,11 +301,13 @@ export class VoiceAgentService {
         )
       : null;
 
+    const spokenCli = formatPhoneForSpeech(cli || normalizedCli);
+
     let greetingText = '';
     if (profile && profile.customer) {
       const c = profile.customer;
       const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${displayCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
+      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${spokenCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
       greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
     }

@@ -19,6 +19,7 @@ class SimpleVoiceAgent {
   constructor() {
     this.isCallActive = false;
     this.isAgentSpeaking = false;
+    this.isProcessingSpeech = false;
     this.ws = null;
     this.wsConnected = false;
     this.wsTimeout = null;
@@ -27,6 +28,10 @@ class SimpleVoiceAgent {
     this.audioContext = null;
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
+
+    // Speech accumulation & debouncing state
+    this.accumulatedTranscript = '';
+    this.speechSilenceTimer = null;
 
     // DOM Elements
     this.playBtn = document.getElementById('playBtn');
@@ -102,6 +107,8 @@ class SimpleVoiceAgent {
 
   async startCall() {
     this.isCallActive = true;
+    this.isProcessingSpeech = false;
+    this.accumulatedTranscript = '';
     await this.resumeAudioContext();
 
     // Update UI button state
@@ -124,7 +131,14 @@ class SimpleVoiceAgent {
 
   endCall() {
     this.isCallActive = false;
+    this.isProcessingSpeech = false;
+    this.accumulatedTranscript = '';
     this.stopAudio();
+
+    if (this.speechSilenceTimer) {
+      clearTimeout(this.speechSilenceTimer);
+      this.speechSilenceTimer = null;
+    }
 
     if (this.wsTimeout) {
       clearTimeout(this.wsTimeout);
@@ -163,10 +177,10 @@ class SimpleVoiceAgent {
       this.ws = new WebSocket(wsUrl);
 
       // On serverless hosts (like Vercel), WebSockets fail or hang.
-      // If WebSocket doesn't establish within 1.5s, switch to REST fallback immediately.
+      // If WebSocket doesn't establish within 1.5s, switch to REST pipeline.
       this.wsTimeout = setTimeout(() => {
         if (!wsSucceeded && this.isCallActive) {
-          console.log('WebSocket connection timed out; switching to REST pipeline.');
+          console.log('WebSocket not active; using HTTP REST pipeline.');
           if (this.ws) {
             try { this.ws.close(); } catch (e) {}
             this.ws = null;
@@ -251,7 +265,7 @@ class SimpleVoiceAgent {
     }
   }
 
-  // --- Speech Recognition for User ---
+  // --- Speech Recognition with Utterance Debouncing & Instant Barge-in ---
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -260,6 +274,14 @@ class SimpleVoiceAgent {
     this.recognition.continuous = true;
     this.recognition.interimResults = true;
     this.recognition.lang = 'en-AU';
+
+    const finalizeAndSend = () => {
+      const textToSend = this.accumulatedTranscript.trim();
+      this.accumulatedTranscript = '';
+      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
+        this.handleUserSpeech(textToSend);
+      }
+    };
 
     // Immediate acoustic barge-in triggers when caller speaks
     this.recognition.onspeechstart = () => {
@@ -285,7 +307,7 @@ class SimpleVoiceAgent {
     };
 
     this.recognition.onresult = (event) => {
-      // If user starts speaking while agent is talking, interrupt immediately
+      // If user starts speaking while agent is talking, cut off agent voice immediately
       if (this.isAgentSpeaking) {
         this.stopAudio();
         if (this.ws && this.wsConnected) {
@@ -295,13 +317,33 @@ class SimpleVoiceAgent {
         }
       }
 
+      // Collect the current spoken sentence
+      let latestChunk = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const chunk = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          const spokenText = event.results[i][0].transcript.trim();
-          if (spokenText.length > 0) {
-            this.handleUserSpeech(spokenText);
-          }
+          this.accumulatedTranscript += ' ' + chunk;
+        } else {
+          latestChunk += chunk;
         }
+      }
+
+      const totalSpoken = (this.accumulatedTranscript + ' ' + latestChunk).trim();
+
+      // Reset debouncing silence timer
+      if (this.speechSilenceTimer) {
+        clearTimeout(this.speechSilenceTimer);
+        this.speechSilenceTimer = null;
+      }
+
+      // If text has been accumulated, wait for 750ms of natural silence before sending
+      if (totalSpoken.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
+        this.speechSilenceTimer = setTimeout(() => {
+          if (!this.accumulatedTranscript.trim() && latestChunk.trim()) {
+            this.accumulatedTranscript = latestChunk;
+          }
+          finalizeAndSend();
+        }, 750);
       }
     };
 
@@ -319,9 +361,13 @@ class SimpleVoiceAgent {
   }
 
   async handleUserSpeech(text) {
-    this.stopAudio(); // Barge-in interrupt immediately
-    this.addTranscript('user', text);
-    this.history.push({ role: 'user', content: text });
+    if (this.isProcessingSpeech || !text || !text.trim()) return;
+    this.isProcessingSpeech = true;
+    this.stopAudio();
+
+    const cleanText = text.trim();
+    this.addTranscript('user', cleanText);
+    this.history.push({ role: 'user', content: cleanText });
 
     const rawCli = this.cliInput ? this.cliInput.value : '';
     const normalizedCli = normalizeAustralianPhone(rawCli);
@@ -335,7 +381,7 @@ class SimpleVoiceAgent {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: cleanText,
           history: this.history,
           cli: normalizedCli,
         }),
@@ -361,6 +407,8 @@ class SimpleVoiceAgent {
       if (this.isCallActive) {
         this.statusText.textContent = 'Live Call Active';
       }
+    } finally {
+      this.isProcessingSpeech = false;
     }
   }
 
@@ -389,6 +437,7 @@ class SimpleVoiceAgent {
   clearTranscript() {
     this.transcriptBox.innerHTML = '';
     this.history = [];
+    this.accumulatedTranscript = '';
   }
 
   // --- Audio Decoding & Queued Playback ---
