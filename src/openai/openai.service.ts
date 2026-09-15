@@ -282,6 +282,17 @@ ${kbText.trim()}
   }
 
   /**
+   * Helper to ensure a chat-compatible model is used for completions
+   */
+  private getChatModel(): string {
+    const configured = this.config.model || 'gpt-4o-mini';
+    if (configured.includes('realtime')) {
+      return 'gpt-4o-mini';
+    }
+    return configured;
+  }
+
+  /**
    * Generates AI brain text response given conversation history
    */
   async generateResponse(
@@ -297,9 +308,10 @@ ${kbText.trim()}
       ...messages,
     ];
     const tools = this.getAvailableTools();
+    const chatModel = this.getChatModel();
 
     const response = await this.openai.chat.completions.create({
-      model: this.config.model,
+      model: chatModel,
       messages: fullMessages,
       tools,
       temperature: this.config.temperature,
@@ -339,7 +351,7 @@ ${kbText.trim()}
       }
 
       const finalResponse = await this.openai.chat.completions.create({
-        model: this.config.model,
+        model: chatModel,
         messages: followUpMessages,
         temperature: this.config.temperature,
       });

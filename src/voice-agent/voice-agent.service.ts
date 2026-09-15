@@ -238,6 +238,66 @@ export class VoiceAgentService {
   }
 
   /**
+   * Generates initial greeting with customer lookup and ElevenLabs TTS audio for HTTP/REST sessions
+   */
+  async generateInitialGreeting(cli: string): Promise<{
+    text: string;
+    audioBuffer?: string;
+    customer?: any;
+  }> {
+    const normalizedCli = normalizeAustralianPhone(cli || '');
+    const displayCli = normalizedCli || 'your number';
+
+    const profile = normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
+      : null;
+
+    let greetingText = '';
+    if (profile && profile.customer) {
+      const c = profile.customer;
+      const v = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+      const vehicleDesc = v
+        ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (${v.rego || ''})`.trim()
+        : 'your vehicle';
+
+      let openActivityStr = '';
+      if (profile.repair_orders && profile.repair_orders.length > 0) {
+        const ro = profile.repair_orders[0];
+        openActivityStr = `I see open Repair Order ${ro.ro_number} with status "${ro.status}". `;
+      } else if (
+        profile.service_bookings &&
+        profile.service_bookings.length > 0
+      ) {
+        const bk = profile.service_bookings[0];
+        openActivityStr = `You have an upcoming service booking on ${bk.date} at ${bk.time}. `;
+      }
+
+      greetingText = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. I can see this number is registered to ${c.customer_name} for your ${vehicleDesc}. ${openActivityStr}How can I assist you with your vehicle today?`;
+    } else {
+      greetingText = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. I don't see an existing customer record registered under this number. Are you an existing client, or looking to make a new enquiry today?`;
+    }
+
+    let audioBase64: string | undefined;
+    try {
+      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const pcmBuffer =
+          await this.elevenLabsService.generateSpeechBuffer(greetingText);
+        audioBase64 = pcmBuffer.toString('base64');
+      }
+    } catch (err: unknown) {
+      this.logger.warn(
+        `TTS generation failed for initial greeting: ${String(err)}`,
+      );
+    }
+
+    return {
+      text: greetingText,
+      audioBuffer: audioBase64,
+      customer: profile,
+    };
+  }
+
+  /**
    * Immediately aborts active voice agent speech when the caller interrupts
    */
   private handleBargeIn(

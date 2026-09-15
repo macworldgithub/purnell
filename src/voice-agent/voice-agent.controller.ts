@@ -75,6 +75,20 @@ export class VoiceAgentController {
     };
   }
 
+  @Post('start')
+  async startCall(@Body('cli') cli?: string) {
+    const result = await this.voiceAgentService.generateInitialGreeting(
+      cli || '',
+    );
+    return {
+      success: true,
+      greeting: result.text,
+      hasAudio: Boolean(result.audioBuffer),
+      audioBuffer: result.audioBuffer,
+      customer: result.customer,
+    };
+  }
+
   @Post('chat')
   async testChat(
     @Body('message') message: string,

@@ -69,7 +69,7 @@ export const VOICE_AGENT_CONFIG: VoiceAgentConfig = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
-    model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2',
+    model: process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini',
     temperature: 0.6,
     vad: {
       type: 'server_vad',

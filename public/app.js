@@ -19,10 +19,13 @@ class SimpleVoiceAgent {
   constructor() {
     this.isCallActive = false;
     this.ws = null;
+    this.wsConnected = false;
+    this.wsTimeout = null;
     this.recognition = null;
     this.history = [];
     this.audioContext = null;
-    this.currentAudioSource = null;
+    this.activeAudioSources = [];
+    this.nextAudioStartTime = 0;
 
     // DOM Elements
     this.playBtn = document.getElementById('playBtn');
@@ -64,8 +67,9 @@ class SimpleVoiceAgent {
 
   resumeAudioContext() {
     if (this.audioContext && this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+      return this.audioContext.resume();
     }
+    return Promise.resolve();
   }
 
   setupEvents() {
@@ -95,29 +99,36 @@ class SimpleVoiceAgent {
     }
   }
 
-  startCall() {
+  async startCall() {
     this.isCallActive = true;
-    this.resumeAudioContext();
+    await this.resumeAudioContext();
 
     // Update UI button state
     this.playBtn.classList.add('active');
     this.playBtnText.textContent = 'End Call';
     this.playIcon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="2"></rect>';
     this.statusBadge.className = 'status-badge active';
-    this.statusText.textContent = 'Live Call Active';
+    this.statusText.textContent = 'Connecting...';
 
     if (this.placeholder) {
       this.placeholder.style.display = 'none';
     }
 
-    // Connect WebSocket voice pipeline to backend & start speech recognition
-    this.connectWebSocket();
+    // Start speech recognition for user microphone
     this.startSpeechRecognition();
+
+    // Connect voice pipeline (tries WebSocket, seamlessly falls back to REST on Vercel)
+    this.connectPipeline();
   }
 
   endCall() {
     this.isCallActive = false;
     this.stopAudio();
+
+    if (this.wsTimeout) {
+      clearTimeout(this.wsTimeout);
+      this.wsTimeout = null;
+    }
 
     if (this.recognition) {
       try { this.recognition.stop(); } catch (e) {}
@@ -125,7 +136,9 @@ class SimpleVoiceAgent {
 
     if (this.ws) {
       try { this.ws.close(); } catch (e) {}
+      this.ws = null;
     }
+    this.wsConnected = false;
 
     // Reset UI button state
     this.playBtn.classList.remove('active');
@@ -135,35 +148,105 @@ class SimpleVoiceAgent {
     this.statusText.textContent = 'Call ended';
   }
 
-  // --- WebSocket Connection ---
-  connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  // --- Voice Pipeline Connection (WebSocket with REST Fallback) ---
+  connectPipeline() {
     const rawCli = this.cliInput ? this.cliInput.value : '';
     const normalizedCli = normalizeAustralianPhone(rawCli);
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/voice?cli=${encodeURIComponent(normalizedCli)}`;
+
+    let wsSucceeded = false;
 
     try {
       this.ws = new WebSocket(wsUrl);
+
+      // On serverless hosts (like Vercel), WebSockets fail or hang.
+      // If WebSocket doesn't establish within 1.5s, switch to REST fallback immediately.
+      this.wsTimeout = setTimeout(() => {
+        if (!wsSucceeded && this.isCallActive) {
+          console.log('WebSocket connection timed out; switching to REST pipeline.');
+          if (this.ws) {
+            try { this.ws.close(); } catch (e) {}
+            this.ws = null;
+          }
+          this.initRestGreeting(normalizedCli);
+        }
+      }, 1500);
+
+      this.ws.onopen = () => {
+        wsSucceeded = true;
+        this.wsConnected = true;
+        if (this.wsTimeout) clearTimeout(this.wsTimeout);
+        if (this.isCallActive) {
+          this.statusText.textContent = 'Live Call Active';
+        }
+      };
 
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
           if (msg.event === 'session_ready') {
-            console.log('Voice session ready:', msg.data);
+            this.statusText.textContent = 'Live Call Active';
           } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
             this.addTranscript('agent', msg.data.text);
             if (msg.data.audioBuffer) {
-              this.playPcmBase64(msg.data.audioBuffer);
+              this.playCompleteAudio(msg.data.audioBuffer);
             }
           } else if (msg.event === 'audio_chunk' && msg.data && msg.data.chunk) {
-            this.playPcmBase64(msg.data.chunk);
-          } else if (msg.event === 'stop_audio') {
+            this.playPcmChunk(msg.data.chunk);
+          } else if (msg.event === 'stop_audio' || msg.event === 'clear_audio_buffer') {
             this.stopAudio();
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error('WebSocket message parsing error:', e);
+        }
+      };
+
+      this.ws.onerror = () => {
+        if (!wsSucceeded && this.isCallActive) {
+          if (this.wsTimeout) clearTimeout(this.wsTimeout);
+          this.wsConnected = false;
+          this.initRestGreeting(normalizedCli);
+        }
+      };
+
+      this.ws.onclose = () => {
+        this.wsConnected = false;
       };
     } catch (e) {
-      console.warn('WebSocket connection failed; using REST fallback.');
+      this.initRestGreeting(normalizedCli);
+    }
+  }
+
+  // --- REST Initial Greeting Fallback (for Vercel & Non-WebSocket environments) ---
+  async initRestGreeting(cli) {
+    if (!this.isCallActive) return;
+    this.statusText.textContent = 'Live Call Active';
+
+    try {
+      const response = await fetch('/voice-agent/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cli }),
+      });
+
+      const data = await response.json();
+      if (this.isCallActive && data.success && data.greeting) {
+        this.history.push({ role: 'assistant', content: data.greeting });
+        this.addTranscript('agent', data.greeting);
+
+        if (data.audioBuffer) {
+          this.playCompleteAudio(data.audioBuffer);
+        } else {
+          this.speakText(data.greeting);
+        }
+      }
+    } catch (err) {
+      console.error('Initial greeting request failed:', err);
+      const fallbackGreeting = 'Purnell Motors, Blakehurst. How can I assist you with your vehicle today?';
+      this.addTranscript('agent', fallbackGreeting);
+      this.speakText(fallbackGreeting);
     }
   }
 
@@ -202,14 +285,17 @@ class SimpleVoiceAgent {
   }
 
   async handleUserSpeech(text) {
-    this.stopAudio(); // Barge-in interrupt
+    this.stopAudio(); // Barge-in interrupt immediately
     this.addTranscript('user', text);
     this.history.push({ role: 'user', content: text });
 
     const rawCli = this.cliInput ? this.cliInput.value : '';
     const normalizedCli = normalizeAustralianPhone(rawCli);
 
-    // Send to backend
+    if (this.isCallActive) {
+      this.statusText.textContent = 'Thinking...';
+    }
+
     try {
       const response = await fetch('/voice-agent/chat', {
         method: 'POST',
@@ -222,19 +308,25 @@ class SimpleVoiceAgent {
       });
 
       const data = await response.json();
+      if (this.isCallActive) {
+        this.statusText.textContent = 'Live Call Active';
+      }
 
-      if (data.success && data.response) {
+      if (this.isCallActive && data.success && data.response) {
         this.history.push({ role: 'assistant', content: data.response });
         this.addTranscript('agent', data.response);
 
         if (data.audioBuffer) {
-          this.playPcmBase64(data.audioBuffer);
+          this.playCompleteAudio(data.audioBuffer);
         } else {
           this.speakText(data.response);
         }
       }
     } catch (err) {
       console.error('API Error:', err);
+      if (this.isCallActive) {
+        this.statusText.textContent = 'Live Call Active';
+      }
     }
   }
 
@@ -265,14 +357,9 @@ class SimpleVoiceAgent {
     this.history = [];
   }
 
-  // --- Audio Synthesis & Playback ---
-  playPcmBase64(base64Data) {
+  // --- Audio Decoding & Queued Playback ---
+  decodePcm(base64Data) {
     try {
-      this.resumeAudioContext();
-      if (!this.audioContext) return;
-
-      this.stopAudio();
-
       const binaryStr = atob(base64Data);
       const len = binaryStr.length;
       const bytes = new Uint8Array(len);
@@ -282,24 +369,57 @@ class SimpleVoiceAgent {
 
       const sampleRate = 16000;
       const numSamples = Math.floor(bytes.length / 2);
+      if (numSamples === 0) return null;
+
       const audioBuffer = this.audioContext.createBuffer(1, numSamples, sampleRate);
       const channelData = audioBuffer.getChannelData(0);
+      const dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-      const dataView = new DataView(bytes.buffer);
       for (let i = 0; i < numSamples; i++) {
         const int16 = dataView.getInt16(i * 2, true);
         channelData[i] = int16 / 32768.0;
       }
-
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioContext.destination);
-
-      this.currentAudioSource = source;
-      source.start();
+      return audioBuffer;
     } catch (e) {
       console.warn('Audio decoding failed:', e);
+      return null;
     }
+  }
+
+  // Schedules streaming chunks sequentially so they do not clip or cut each other off
+  playPcmChunk(base64Data) {
+    if (!this.isCallActive) return;
+    this.resumeAudioContext();
+    if (!this.audioContext) return;
+
+    const audioBuffer = this.decodePcm(base64Data);
+    if (!audioBuffer) return;
+
+    const source = this.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.audioContext.destination);
+
+    const currentTime = this.audioContext.currentTime;
+    if (this.nextAudioStartTime < currentTime) {
+      this.nextAudioStartTime = currentTime;
+    }
+
+    source.start(this.nextAudioStartTime);
+    this.nextAudioStartTime += audioBuffer.duration;
+    this.activeAudioSources.push(source);
+
+    source.onended = () => {
+      const idx = this.activeAudioSources.indexOf(source);
+      if (idx !== -1) {
+        this.activeAudioSources.splice(idx, 1);
+      }
+    };
+  }
+
+  // Play a full single response (e.g. from REST)
+  playCompleteAudio(base64Data) {
+    this.stopAudio();
+    this.playPcmChunk(base64Data);
   }
 
   speakText(text) {
@@ -312,10 +432,14 @@ class SimpleVoiceAgent {
   }
 
   stopAudio() {
-    if (this.currentAudioSource) {
-      try { this.currentAudioSource.stop(); } catch (e) {}
-      this.currentAudioSource = null;
+    for (const src of this.activeAudioSources) {
+      try {
+        src.stop();
+      } catch (e) {}
     }
+    this.activeAudioSources = [];
+    this.nextAudioStartTime = 0;
+
     if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
     }
