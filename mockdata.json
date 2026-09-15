@@ -1,0 +1,624 @@
+{
+    "_meta": {
+        "description": "Purnell Motors — Mock Customers CUS-00006 to CUS-00015",
+        "note": "Pentana will return: customer record + vehicles + open ROs + parts orders + bookings + staff assignments. Field names match context object schema — no prompt changes needed at cutover.",
+        "version": "1.0"
+    },
+    "customers": [
+        {
+            "customer_id": "CUS-00006",
+            "customer_name": "David Okonkwo",
+            "preferred_name": "David",
+            "customer_since": "2022-02-18",
+            "mobile": "+61412000006",
+            "landline": null,
+            "email": "david.okonkwo@example.com",
+            "consent_sms": true,
+            "consent_marketing": true,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "PQR678",
+                    "vin": "SALCA2AX9NA678901",
+                    "year": 2022,
+                    "make": "Land Rover",
+                    "model": "Discovery Sport",
+                    "colour": "Hakuba Silver",
+                    "assigned_advisor": "Robert Suto",
+                    "assigned_sales": "Alan Tran"
+                }
+            ],
+            "last_service": {
+                "date": "2025-11-10",
+                "mileage": 38000,
+                "advisor": "Robert Suto"
+            },
+            "scenario": "Booked / not yet arrived — calling day before to confirm"
+        },
+        {
+            "customer_id": "CUS-00007",
+            "customer_name": "Linda Marchetti",
+            "preferred_name": "Linda",
+            "customer_since": "2013-06-05",
+            "mobile": "+61412000007",
+            "landline": "0285580007",
+            "email": "linda.marchetti@example.com",
+            "consent_sms": false,
+            "consent_marketing": false,
+            "flags": {
+                "vip": true,
+                "warranty_open": true,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "STU901",
+                    "vin": "SAJWA2GE5HMU901234",
+                    "year": 2017,
+                    "make": "Jaguar",
+                    "model": "XF",
+                    "colour": "Loire Blue",
+                    "assigned_advisor": "Jamie Drummond",
+                    "assigned_sales": "Anja Ruzic"
+                },
+                {
+                    "rego": "VWX234",
+                    "vin": "SALGA2EF5PA234567",
+                    "year": 2023,
+                    "make": "Land Rover",
+                    "model": "Range Rover",
+                    "colour": "Varesine Blue",
+                    "assigned_advisor": "Jamie Drummond",
+                    "assigned_sales": "Anja Ruzic"
+                }
+            ],
+            "last_service": {
+                "date": "2026-06-20",
+                "mileage": 62000,
+                "advisor": "Jamie Drummond"
+            },
+            "scenario": "Warranty open on XF — calling to chase status from Matthew Thompson"
+        },
+        {
+            "customer_id": "CUS-00008",
+            "customer_name": "Tom Reilly",
+            "preferred_name": "Tom",
+            "customer_since": "2024-08-30",
+            "mobile": "+61412000008",
+            "landline": null,
+            "email": "tom.reilly@example.com",
+            "consent_sms": true,
+            "consent_marketing": true,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "YZA567",
+                    "vin": "INEOSQM3PA567890",
+                    "year": 2024,
+                    "make": "INEOS",
+                    "model": "Grenadier Quartermaster",
+                    "colour": "Minervablue",
+                    "assigned_advisor": "Kamal Ghassah",
+                    "assigned_sales": "Alex Collo"
+                }
+            ],
+            "last_service": {
+                "date": "2026-03-14",
+                "mileage": 15000,
+                "advisor": "Kamal Ghassah"
+            },
+            "scenario": "Parts arrived — front diff guard back-ordered for 6 weeks, now in. SMS trigger pending."
+        },
+        {
+            "customer_id": "CUS-00009",
+            "customer_name": "Priya Sharma",
+            "preferred_name": "Priya",
+            "customer_since": "2019-09-17",
+            "mobile": "+61412000009",
+            "landline": null,
+            "email": "priya.sharma@example.com",
+            "consent_sms": true,
+            "consent_marketing": false,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": true
+            },
+            "vehicles": [
+                {
+                    "rego": "BCD890",
+                    "vin": "SALVA2AE0KH890123",
+                    "year": 2019,
+                    "make": "Land Rover",
+                    "model": "Range Rover Sport",
+                    "colour": "Fuji White",
+                    "assigned_advisor": "Robert Suto",
+                    "assigned_sales": "Jenson Milne"
+                }
+            ],
+            "last_service": {
+                "date": "2026-07-01",
+                "mileage": 54000,
+                "advisor": "Robert Suto"
+            },
+            "scenario": "No open RO. Awaiting callback from Jenson re: trade-in valuation on her Sport, eyeing new Defender 130."
+        },
+        {
+            "customer_id": "CUS-00010",
+            "customer_name": "Chris Halvorsen",
+            "preferred_name": "Chris",
+            "customer_since": "2021-04-11",
+            "mobile": "+61412000010",
+            "landline": null,
+            "email": "chris.halvorsen@example.com",
+            "consent_sms": true,
+            "consent_marketing": true,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "EFG123",
+                    "vin": "SALCA2AX1MA123456",
+                    "year": 2021,
+                    "make": "Land Rover",
+                    "model": "Defender 90",
+                    "colour": "Gondwana Stone",
+                    "assigned_advisor": "Kamal Ghassah",
+                    "assigned_sales": "Anja Ruzic"
+                }
+            ],
+            "last_service": {
+                "date": "2026-08-05",
+                "mileage": 28000,
+                "advisor": "Kamal Ghassah"
+            },
+            "scenario": "Quality check / wash — job complete, being prepped. Expected ready 3:30 pm today."
+        },
+        {
+            "customer_id": "CUS-00011",
+            "customer_name": "Fatima Al-Rashid",
+            "preferred_name": "Fatima",
+            "customer_since": "2017-01-25",
+            "mobile": "+61412000011",
+            "landline": "0285580011",
+            "email": "fatima.alrashid@example.com",
+            "consent_sms": true,
+            "consent_marketing": false,
+            "flags": {
+                "vip": true,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "HIJ456",
+                    "vin": "SALGA2EF1NA456789",
+                    "year": 2022,
+                    "make": "Land Rover",
+                    "model": "Range Rover Autobiography",
+                    "colour": "Charente Grey",
+                    "assigned_advisor": "Robert Suto",
+                    "assigned_sales": "Anja Ruzic"
+                }
+            ],
+            "last_service": {
+                "date": "2026-05-18",
+                "mileage": 41000,
+                "advisor": "Robert Suto"
+            },
+            "scenario": "VIP client. Calling about loan vehicle — wants to know if she can extend. Loan RR Sport due back today."
+        },
+        {
+            "customer_id": "CUS-00012",
+            "customer_name": "Marcus Webb",
+            "preferred_name": "Marcus",
+            "customer_since": "2025-03-07",
+            "mobile": "+61412000012",
+            "landline": null,
+            "email": "marcus.webb@example.com",
+            "consent_sms": true,
+            "consent_marketing": true,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [],
+            "last_service": null,
+            "scenario": "New prospect. No vehicle on file. Called in asking about 2026 Defender 130 availability and deposit process."
+        },
+        {
+            "customer_id": "CUS-00013",
+            "customer_name": "Helen Tsakiris",
+            "preferred_name": "Helen",
+            "customer_since": "2016-10-03",
+            "mobile": "+61412000013",
+            "landline": "0285580013",
+            "email": "helen.tsakiris@example.com",
+            "consent_sms": false,
+            "consent_marketing": false,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": true,
+                "awaiting_callback": true
+            },
+            "vehicles": [
+                {
+                    "rego": "KLM789",
+                    "vin": "SALCA2AX4MA789012",
+                    "year": 2021,
+                    "make": "Land Rover",
+                    "model": "Discovery",
+                    "colour": "Narvik Black",
+                    "assigned_advisor": "Jamie Drummond",
+                    "assigned_sales": "Alan Tran"
+                }
+            ],
+            "last_service": {
+                "date": "2026-09-01",
+                "mileage": 72000,
+                "advisor": "Jamie Drummond"
+            },
+            "scenario": "Complaint open. Reported rattle from rear door after last service. Callback from Kamal overdue by 1 day. Escalate to Sherwyn if Kamal unavailable."
+        },
+        {
+            "customer_id": "CUS-00014",
+            "customer_name": "Ryan Sorensen",
+            "preferred_name": "Ryan",
+            "customer_since": "2023-11-19",
+            "mobile": "+61412000014",
+            "landline": null,
+            "email": "ryan.sorensen@example.com",
+            "consent_sms": true,
+            "consent_marketing": true,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "NOP012",
+                    "vin": "OMODAJC5PA012345",
+                    "year": 2024,
+                    "make": "Omoda",
+                    "model": "C5",
+                    "colour": "Pearl White",
+                    "assigned_advisor": null,
+                    "assigned_sales": null,
+                    "franchise": "omoda_jaecoo"
+                }
+            ],
+            "last_service": {
+                "date": "2026-04-22",
+                "mileage": 12000,
+                "advisor": "Omoda Service Team"
+            },
+            "scenario": "Omoda Jaecoo client. Calling re: parts quote on body panel. Must route to (02) 8558 7090 — do NOT use JLR parts diary."
+        },
+        {
+            "customer_id": "CUS-00015",
+            "customer_name": "Natalie Drummond",
+            "preferred_name": "Natalie",
+            "customer_since": "2020-12-01",
+            "mobile": "+61412000015",
+            "landline": null,
+            "email": "natalie.drummond@example.com",
+            "consent_sms": true,
+            "consent_marketing": false,
+            "flags": {
+                "vip": false,
+                "warranty_open": false,
+                "complaint_open": false,
+                "awaiting_callback": false
+            },
+            "vehicles": [
+                {
+                    "rego": "QRS345",
+                    "vin": "SALVA2AE3HA345678",
+                    "year": 2020,
+                    "make": "Land Rover",
+                    "model": "Range Rover Sport",
+                    "colour": "Silicon Silver",
+                    "assigned_advisor": "Robert Suto",
+                    "assigned_sales": "Anja Ruzic"
+                }
+            ],
+            "last_service": {
+                "date": "2026-09-10",
+                "mileage": 89000,
+                "advisor": "Robert Suto"
+            },
+            "scenario": "Third party caller scenario. Husband's car in for service. Must verify she is authorised contact on CRM before releasing any workshop info."
+        }
+    ],
+    "repair_orders": [
+        {
+            "ro_number": "RO-46001",
+            "customer_id": "CUS-00006",
+            "vehicle_rego": "PQR678",
+            "status": "booked_not_arrived",
+            "drop_off_date": "2026-09-16",
+            "drop_off_time": "08:00",
+            "eta": null,
+            "advisor": "Robert Suto",
+            "awaiting_approval": false,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": false,
+                "rego": null,
+                "make": null,
+                "model": null
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "40,000 km scheduled service",
+                    "status": "scheduled"
+                }
+            ],
+            "workshop_notes": "Customer confirmed drop-off 8 am. No loan car requested."
+        },
+        {
+            "ro_number": "RO-46002",
+            "customer_id": "CUS-00007",
+            "vehicle_rego": "STU901",
+            "status": "awaiting_approval",
+            "drop_off_date": "2026-09-12",
+            "eta": null,
+            "advisor": "Jamie Drummond",
+            "awaiting_approval": true,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": true,
+                "rego": "LOAN-05",
+                "make": "Jaguar",
+                "model": "F-Pace"
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "Warranty inspection — intermittent electrical fault, instrument cluster",
+                    "status": "pending_approval"
+                }
+            ],
+            "workshop_notes": "Referred to Matthew Thompson. Warranty claim submitted to JLR. Awaiting OEM approval. ETA unknown."
+        },
+        {
+            "ro_number": "RO-46003",
+            "customer_id": "CUS-00008",
+            "vehicle_rego": "YZA567",
+            "status": "awaiting_parts",
+            "drop_off_date": "2026-08-01",
+            "eta": null,
+            "advisor": "Kamal Ghassah",
+            "awaiting_approval": false,
+            "awaiting_parts": true,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": true,
+                "rego": "LOAN-09",
+                "make": "Land Rover",
+                "model": "Defender 110"
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "Front underbody diff guard — INEOS Genuine",
+                    "status": "parts_ordered"
+                }
+            ],
+            "workshop_notes": "Part arrived 14 Sep. SMS not yet sent — trigger pending. Fitment can be booked now."
+        },
+        {
+            "ro_number": "RO-46004",
+            "customer_id": "CUS-00010",
+            "vehicle_rego": "EFG123",
+            "status": "quality_check",
+            "drop_off_date": "2026-09-15",
+            "eta": "2026-09-15T15:30:00+10:00",
+            "advisor": "Kamal Ghassah",
+            "awaiting_approval": false,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": false,
+                "rego": null,
+                "make": null,
+                "model": null
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "Annual service + brake fluid flush",
+                    "status": "complete"
+                },
+                {
+                    "line_id": 2,
+                    "description": "Vehicle wash and presentation",
+                    "status": "in_progress"
+                }
+            ],
+            "workshop_notes": "On track for 3:30 pm collection. Kamal confirmed."
+        },
+        {
+            "ro_number": "RO-46005",
+            "customer_id": "CUS-00011",
+            "vehicle_rego": "HIJ456",
+            "status": "checked_in",
+            "drop_off_date": "2026-09-15",
+            "eta": "2026-09-16T09:00:00+10:00",
+            "advisor": "Robert Suto",
+            "awaiting_approval": false,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": true,
+                "rego": "LOAN-02",
+                "make": "Land Rover",
+                "model": "Range Rover Sport",
+                "due_back": "2026-09-15",
+                "extension_possible": true
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "75,000 km major service + suspension check",
+                    "status": "in_progress"
+                }
+            ],
+            "workshop_notes": "VIP client. Colin Whybro aware. Loan RR Sport due back today — confirm extension with Service if requested."
+        },
+        {
+            "ro_number": "RO-46006",
+            "customer_id": "CUS-00013",
+            "vehicle_rego": "KLM789",
+            "status": "checked_in",
+            "drop_off_date": "2026-09-15",
+            "eta": "2026-09-15T17:00:00+10:00",
+            "advisor": "Jamie Drummond",
+            "awaiting_approval": false,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": false,
+                "rego": null,
+                "make": null,
+                "model": null
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "Investigate rear door rattle reported post-service",
+                    "status": "in_progress"
+                }
+            ],
+            "workshop_notes": "Complaint open. Kamal callback to Helen overdue since 14 Sep. Escalate to Sherwyn if Kamal unavailable. Do not make promises on outcome."
+        },
+        {
+            "ro_number": "RO-46007",
+            "customer_id": "CUS-00015",
+            "vehicle_rego": "QRS345",
+            "status": "awaiting_approval",
+            "drop_off_date": "2026-09-14",
+            "eta": null,
+            "advisor": "Robert Suto",
+            "awaiting_approval": true,
+            "awaiting_parts": false,
+            "ready_for_collection": false,
+            "loan_vehicle": {
+                "active": true,
+                "rego": "LOAN-06",
+                "make": "Land Rover",
+                "model": "Discovery Sport"
+            },
+            "job_lines": [
+                {
+                    "line_id": 1,
+                    "description": "90,000 km service",
+                    "status": "complete"
+                },
+                {
+                    "line_id": 2,
+                    "description": "Rear brake pads and rotors — worn beyond safe limit",
+                    "status": "pending_approval"
+                },
+                {
+                    "line_id": 3,
+                    "description": "Engine air filter replacement",
+                    "status": "pending_approval"
+                }
+            ],
+            "workshop_notes": "Robert left voicemail for Natalie 9:45 am. No response. Third party (husband) may call — verify authorised contact before releasing info."
+        }
+    ],
+    "parts_orders": [
+        {
+            "parts_order_id": "PO-7712",
+            "ro_number": "RO-46003",
+            "customer_id": "CUS-00008",
+            "vehicle_rego": "YZA567",
+            "lines": [
+                {
+                    "part_number": "INEOS-UBG-001",
+                    "description": "Front underbody diff guard — INEOS Genuine",
+                    "status": "arrived",
+                    "arrived": true,
+                    "arrival_date": "2026-09-14",
+                    "fitment_booked": false
+                }
+            ],
+            "notify_on": "first_arrival",
+            "sms_sent": false,
+            "suppress_until": null
+        }
+    ],
+    "service_bookings": [
+        {
+            "booking_id": "BK-9960",
+            "customer_id": "CUS-00006",
+            "vehicle_rego": "PQR678",
+            "date": "2026-09-16",
+            "time": "08:00",
+            "advisor": "Robert Suto",
+            "job_type": "40,000 km scheduled service",
+            "loan_car_requested": false,
+            "loan_car_confirmed": false,
+            "collect_and_return": false,
+            "status": "confirmed"
+        },
+        {
+            "booking_id": "BK-9961",
+            "customer_id": "CUS-00012",
+            "vehicle_rego": null,
+            "date": "2026-09-18",
+            "time": "11:00",
+            "advisor": "Jenson Milne",
+            "job_type": "Sales consultation — Defender 130 deposit and stock discussion",
+            "loan_car_requested": false,
+            "loan_car_confirmed": false,
+            "collect_and_return": false,
+            "status": "confirmed",
+            "notes": "Marcus Webb. Interested in 2026 Defender 130. Deposit conversation — must go to Sales. Do not discuss price or availability with AI."
+        }
+    ],
+    "authorised_contacts": [
+        {
+            "customer_id": "CUS-00015",
+            "authorised_third_parties": [
+                {
+                    "name": "James Drummond",
+                    "relationship": "husband",
+                    "mobile": "+61412000099",
+                    "authorised_for": [
+                        "workshop_status",
+                        "collection",
+                        "approval_decisions"
+                    ]
+                }
+            ]
+        }
+    ]
+}

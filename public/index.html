@@ -15,8 +15,26 @@
     <!-- Title Header -->
     <header class="header">
       <h1>Purnell Motors Voice Agent</h1>
-      <p class="subtitle">Click the Play button to start the conversation</p>
+      <p class="subtitle">Enter incoming caller phone number and click Start Voice Agent</p>
     </header>
+
+    <!-- Caller CLI Settings Section -->
+    <section class="cli-card">
+      <div class="cli-input-group">
+        <label for="cliInput" class="cli-label">Incoming Phone Number (CLI):</label>
+        <input 
+          type="tel" 
+          id="cliInput" 
+          class="cli-input" 
+          placeholder="e.g. 0412000006 or 0285580007" 
+          value="0412000006"
+          autocomplete="off"
+        />
+      </div>
+      <div class="cli-preview">
+        Normalized CLI (Sent to Agent): <span id="normalizedBadge" class="normalized-badge">+61412000006</span>
+      </div>
+    </section>
 
     <!-- Main Control Section: Big Play Button -->
     <section class="controls-card">

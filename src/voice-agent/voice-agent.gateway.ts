@@ -22,10 +22,20 @@ export class VoiceAgentGateway
 
   constructor(private readonly voiceAgentService: VoiceAgentService) { }
 
-  async handleConnection(client: WebSocket) {
+  async handleConnection(client: WebSocket, req: any) {
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     this.clientSessionMap.set(client, sessionId);
-    this.logger.log(`WebSocket client connected. Session ID: ${sessionId}`);
+
+    // Extract optional CLI query param (e.g. /voice?cli=0412000006)
+    const urlStr = req?.url || '';
+    const queryIdx = urlStr.indexOf('?');
+    const queryString = queryIdx !== -1 ? urlStr.substring(queryIdx + 1) : '';
+    const urlParams = new URLSearchParams(queryString);
+    const cli = urlParams.get('cli') || urlParams.get('phone') || '';
+
+    this.logger.log(
+      `WebSocket client connected. Session ID: ${sessionId} | CLI: "${cli}"`,
+    );
 
     try {
       await this.voiceAgentService.createSession(sessionId, {
@@ -68,23 +78,20 @@ export class VoiceAgentGateway
         },
       });
 
-      const greetingText =
-        'Welcome to Purnell Motors! I am your AI receptionist. How can I assist you with your vehicle today?';
-
       // Send session readiness message
       this.sendJson(client, {
         event: 'session_ready',
         data: {
           sessionId,
-          greeting: greetingText,
-          stt: 'Deepgram Nova-2 (real-time stream)',
+          cli,
+          stt: 'Deepgram Nova-3 (real-time stream)',
           brain: 'OpenAI gpt-realtime-2 (with Pentana lookup & prompt data)',
           tts: 'ElevenLabs eleven_flash_v2_5 (PCM 16kHz with instant barge-in interrupt)',
         },
       });
 
-      // Trigger backend voice pipeline for initial greeting
-      void this.voiceAgentService.sendInitialGreeting(sessionId, {
+      // Trigger backend 2-phase greeting (state CLI, lookup DB, report customer details)
+      void this.voiceAgentService.sendInitialGreeting(sessionId, cli, {
         onAiReply: (text: string, toolLogs?: string[]) => {
           this.sendJson(client, {
             event: 'ai_reply',

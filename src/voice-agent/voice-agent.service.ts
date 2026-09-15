@@ -18,6 +18,9 @@ import {
   AppointmentSlot,
 } from '../pentana/pentana.data';
 
+import { CustomerDatabaseService } from '../customer-database/customer-database.service';
+import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
+
 export interface ConversationTurn {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -43,6 +46,7 @@ export class VoiceAgentService {
     private readonly elevenLabsService: ElevenLabsService,
     private readonly openAiService: OpenAiService,
     private readonly pentanaService: PentanaService,
+    private readonly customerDatabaseService: CustomerDatabaseService,
   ) {
     this.logger.log('VoiceAgentService Orchestrator initialized');
   }
@@ -117,51 +121,119 @@ export class VoiceAgentService {
   }
 
   /**
-   * Triggers initial backend voice agent greeting & audio stream for a new session
+   * Triggers initial backend voice agent 2-phase greeting & audio stream for a new session
    */
   async sendInitialGreeting(
     sessionId: string,
+    cli: string,
     callbacks: {
       onAiReply: (text: string, toolLogs?: string[]) => void;
       onAudioChunk: (chunk: Buffer) => void;
     },
   ): Promise<void> {
     const session = this.activeSessions.get(sessionId);
-    const greetingText =
-      'Welcome to Purnell Motors! I am your AI receptionist. How can I assist you with your vehicle today?';
+    const normalizedCli = normalizeAustralianPhone(cli || '');
+    const displayCli = normalizedCli || 'your number';
+
+    // Phase 1: State incoming phone number and announce lookup pause
+    const step1Text = `Purnell Motors, Blakehurst. I see your call is coming from ${displayCli}. Please give me a moment while I fetch your details...`;
 
     if (session) {
-      session.history.push({ role: 'assistant', content: greetingText });
+      session.history.push({ role: 'assistant', content: step1Text });
     }
-
-    callbacks.onAiReply(greetingText);
+    callbacks.onAiReply(step1Text);
 
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const thisTurnId = session ? ++session.currentTurnId : 1;
-        const abortController = new AbortController();
+        const turnId1 = session ? ++session.currentTurnId : 1;
+        const abortCtrl1 = new AbortController();
         if (session) {
-          session.activeAbortController = abortController;
+          session.activeAbortController = abortCtrl1;
           session.isSpeaking = true;
         }
 
         await this.elevenLabsService.streamSpeech(
-          greetingText,
+          step1Text,
           (chunk) => {
-            if (!abortController.signal.aborted) {
+            if (!abortCtrl1.signal.aborted) {
               callbacks.onAudioChunk(chunk);
             }
           },
-          abortController.signal,
+          abortCtrl1.signal,
         );
 
-        if (session && session.currentTurnId === thisTurnId) {
+        if (session && session.currentTurnId === turnId1) {
           session.isSpeaking = false;
           session.activeAbortController = null;
         }
       }
     } catch (err) {
-      this.logger.warn(`Initial greeting TTS failed: ${String(err)}`);
+      this.logger.warn(`Phase 1 greeting TTS failed: ${String(err)}`);
+    }
+
+    // Phase 2: Query MongoDB Atlas for complete connected profile
+    let step2Text = '';
+    const profile = normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(
+          normalizedCli,
+        )
+      : null;
+
+    if (profile && profile.customer) {
+      const c = profile.customer;
+      const v = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+      const vehicleDesc = v
+        ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (${v.rego || ''})`.trim()
+        : 'your vehicle';
+
+      let openActivityStr = '';
+      if (profile.repair_orders && profile.repair_orders.length > 0) {
+        const ro = profile.repair_orders[0];
+        openActivityStr = `I see open Repair Order ${ro.ro_number} with status "${ro.status}". `;
+      } else if (
+        profile.service_bookings &&
+        profile.service_bookings.length > 0
+      ) {
+        const bk = profile.service_bookings[0];
+        openActivityStr = `You have an upcoming service booking on ${bk.date} at ${bk.time}. `;
+      }
+
+      step2Text = `Thank you for waiting. I can see this number is registered to ${c.customer_name} for your ${vehicleDesc}. ${openActivityStr}How can I assist you with your vehicle today?`;
+    } else {
+      step2Text = `Thank you for waiting. I don't see an existing customer record registered under this number. Are you an existing client, or looking to make a new enquiry today?`;
+    }
+
+    if (session) {
+      session.history.push({ role: 'assistant', content: step2Text });
+    }
+    callbacks.onAiReply(step2Text);
+
+    try {
+      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const turnId2 = session ? ++session.currentTurnId : 2;
+        const abortCtrl2 = new AbortController();
+        if (session) {
+          session.activeAbortController = abortCtrl2;
+          session.isSpeaking = true;
+        }
+
+        await this.elevenLabsService.streamSpeech(
+          step2Text,
+          (chunk) => {
+            if (!abortCtrl2.signal.aborted) {
+              callbacks.onAudioChunk(chunk);
+            }
+          },
+          abortCtrl2.signal,
+        );
+
+        if (session && session.currentTurnId === turnId2) {
+          session.isSpeaking = false;
+          session.activeAbortController = null;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Phase 2 greeting TTS failed: ${String(err)}`);
     }
   }
 

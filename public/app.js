@@ -1,6 +1,19 @@
 /**
- * Simple Purnell Motors Voice Agent Application
+ * Purnell Motors Voice Agent Application with Real-time CLI Normalization
  */
+
+function normalizeAustralianPhone(input) {
+  if (!input) return '';
+  let clean = input.trim().replace(/[^\d+]/g, '');
+  if (!clean) return '';
+  if (clean.startsWith('+61')) return '+61' + clean.slice(3).replace(/\D/g, '');
+  if (clean.startsWith('+')) return clean;
+  const digits = clean.replace(/\D/g, '');
+  if (digits.startsWith('61') && digits.length >= 10) return '+' + digits;
+  if (digits.startsWith('0') && digits.length === 10) return '+61' + digits.slice(1);
+  if (digits.length === 9 && ['4', '2', '3', '7', '8'].includes(digits[0])) return '+61' + digits;
+  return digits.length >= 10 ? '+' + digits : digits;
+}
 
 class SimpleVoiceAgent {
   constructor() {
@@ -20,6 +33,8 @@ class SimpleVoiceAgent {
     this.transcriptBox = document.getElementById('transcriptBox');
     this.placeholder = document.getElementById('placeholder');
     this.clearBtn = document.getElementById('clearBtn');
+    this.cliInput = document.getElementById('cliInput');
+    this.normalizedBadge = document.getElementById('normalizedBadge');
 
     this.init();
   }
@@ -28,6 +43,14 @@ class SimpleVoiceAgent {
     this.setupEvents();
     this.initSpeechRecognition();
     this.initAudioContext();
+    this.updateCliBadge();
+  }
+
+  updateCliBadge() {
+    if (this.cliInput && this.normalizedBadge) {
+      const normalized = normalizeAustralianPhone(this.cliInput.value);
+      this.normalizedBadge.textContent = normalized || 'Invalid Number';
+    }
   }
 
   initAudioContext() {
@@ -55,6 +78,13 @@ class SimpleVoiceAgent {
     this.clearBtn.addEventListener('click', () => {
       this.clearTranscript();
     });
+
+    // Real-time CLI normalization update
+    if (this.cliInput) {
+      this.cliInput.addEventListener('input', () => {
+        this.updateCliBadge();
+      });
+    }
   }
 
   toggleCall() {
@@ -108,7 +138,9 @@ class SimpleVoiceAgent {
   // --- WebSocket Connection ---
   connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/voice`;
+    const rawCli = this.cliInput ? this.cliInput.value : '';
+    const normalizedCli = normalizeAustralianPhone(rawCli);
+    const wsUrl = `${protocol}//${window.location.host}/voice?cli=${encodeURIComponent(normalizedCli)}`;
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -117,7 +149,6 @@ class SimpleVoiceAgent {
         try {
           const msg = JSON.parse(event.data);
           if (msg.event === 'session_ready') {
-            // Session initialized
             console.log('Voice session ready:', msg.data);
           } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
             this.addTranscript('agent', msg.data.text);
@@ -175,6 +206,9 @@ class SimpleVoiceAgent {
     this.addTranscript('user', text);
     this.history.push({ role: 'user', content: text });
 
+    const rawCli = this.cliInput ? this.cliInput.value : '';
+    const normalizedCli = normalizeAustralianPhone(rawCli);
+
     // Send to backend
     try {
       const response = await fetch('/voice-agent/chat', {
@@ -183,6 +217,7 @@ class SimpleVoiceAgent {
         body: JSON.stringify({
           message: text,
           history: this.history,
+          cli: normalizedCli,
         }),
       });
 

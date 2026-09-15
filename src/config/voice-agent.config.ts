@@ -88,7 +88,7 @@ export const VOICE_AGENT_CONFIG: VoiceAgentConfig = {
       process.env.DEEPGRAM_API_KEY ||
       process.env.DeepGram_API_Key ||
       '',
-    model: 'nova-2',
+    model: 'nova-3',
     language: 'en',
     smart_format: true,
     encoding: 'linear16',

@@ -6,9 +6,16 @@ import { DeepgramModule } from '../deepgram/deepgram.module';
 import { ElevenLabsModule } from '../elevenlabs/elevenlabs.module';
 import { OpenAiModule } from '../openai/openai.module';
 import { PentanaModule } from '../pentana/pentana.module';
+import { CustomerDatabaseModule } from '../customer-database/customer-database.module';
 
 @Module({
-  imports: [DeepgramModule, ElevenLabsModule, OpenAiModule, PentanaModule],
+  imports: [
+    DeepgramModule,
+    ElevenLabsModule,
+    OpenAiModule,
+    PentanaModule,
+    CustomerDatabaseModule,
+  ],
   controllers: [VoiceAgentController],
   providers: [VoiceAgentService, VoiceAgentGateway],
   exports: [VoiceAgentService],

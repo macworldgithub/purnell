@@ -51,6 +51,65 @@ body {
   color: var(--text-muted);
 }
 
+/* CLI Card */
+.cli-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+.cli-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cli-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.cli-input {
+  background: #090d16;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: #38bdf8;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-family: monospace;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.cli-input:focus {
+  border-color: var(--primary-color);
+}
+
+.cli-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.normalized-badge {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
 /* Controls Card */
 .controls-card {
   background: var(--card-bg);
