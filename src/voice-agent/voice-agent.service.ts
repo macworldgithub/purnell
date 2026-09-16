@@ -436,6 +436,22 @@ export class VoiceAgentService {
   }
 
   /**
+   * Manually abort active voice agent speech for a session (e.g. client barge-in)
+   */
+  interruptSession(sessionId: string) {
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      this.logger.log(`[Manual Barge-In] Aborting speech for session ${sessionId}`);
+      if (session.activeAbortController) {
+        session.activeAbortController.abort();
+        session.activeAbortController = null;
+      }
+      session.isSpeaking = false;
+      session.currentTurnId++;
+    }
+  }
+
+  /**
    * Process incoming user audio chunk from WebSocket
    */
   handleAudioChunk(

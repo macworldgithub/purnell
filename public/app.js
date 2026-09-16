@@ -179,6 +179,8 @@ class SimpleVoiceAgent {
           if (msg.event === 'session_ready') {
             this.statusText.textContent = 'Live Call Active';
           } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
+            this.statusText.textContent = 'Live Call Active';
+            this.history.push({ role: 'assistant', content: msg.data.text });
             this.addTranscript('agent', msg.data.text);
             if (msg.data.audioBuffer) {
               this.playCompleteAudio(msg.data.audioBuffer);
@@ -235,10 +237,13 @@ class SimpleVoiceAgent {
     }
   }
 
-  // --- Speech Recognition with Echo Prevention & Fresh Turn Buffering ---
+  // --- Speech Recognition with Real-time Barge-In & Continuous Listening ---
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      console.warn('SpeechRecognition not supported in this browser.');
+      return;
+    }
 
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = true;
@@ -253,21 +258,16 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // Reset recognition buffer for the next turn
+      // Reset recognition buffer for the next turn cleanly
       try { this.recognition.stop(); } catch (e) {}
 
-      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
+      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
         this.handleUserSpeech(textToSend);
       }
     };
 
     this.recognition.onresult = (event) => {
-      // Echo gate: completely ignore microphone if the agent is actively speaking
-      if (this.isAgentSpeaking) {
-        return;
-      }
-
-      // Read current turn transcript directly from event.results (no duplicate string compounding)
+      // Reconstruct clean transcript from current speech recognition results
       let turnTranscript = '';
       for (let i = 0; i < event.results.length; ++i) {
         const item = event.results[i];
@@ -276,7 +276,21 @@ class SimpleVoiceAgent {
         }
       }
 
-      this.accumulatedTranscript = turnTranscript.trim();
+      const cleanTurn = turnTranscript.trim();
+      if (!cleanTurn) return;
+
+      // INSTANT BARGE-IN: If agent is speaking and user speaks, cut off agent audio immediately
+      if (this.isAgentSpeaking) {
+        console.log('[Barge-In] User interrupted agent with speech:', cleanTurn);
+        this.stopAudio();
+        if (this.ws && this.wsConnected) {
+          try {
+            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking', data: {} }));
+          } catch (e) {}
+        }
+      }
+
+      this.accumulatedTranscript = cleanTurn;
 
       // Reset debouncing silence timer
       if (this.speechSilenceTimer) {
@@ -284,23 +298,41 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // Wait for 1000ms of silence after user finishes speaking before sending turn
-      if (this.accumulatedTranscript.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
+      // Allow 1100ms pause after speaking before finalizing and dispatching turn
+      if (this.accumulatedTranscript.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
         this.speechSilenceTimer = setTimeout(() => {
           finalizeAndSend();
-        }, 1000);
+        }, 1100);
+      }
+    };
+
+    this.recognition.onerror = (event) => {
+      if (event.error !== 'no-speech') {
+        console.warn('SpeechRecognition error:', event.error);
+      }
+      if (event.error === 'not-allowed') {
+        this.statusText.textContent = 'Microphone blocked';
       }
     };
 
     this.recognition.onend = () => {
-      if (this.isCallActive && !this.isAgentSpeaking) {
-        try { this.recognition.start(); } catch (e) {}
+      // Keep listening continuously as long as call is active
+      if (this.isCallActive) {
+        try {
+          this.recognition.start();
+        } catch (e) {
+          setTimeout(() => {
+            if (this.isCallActive) {
+              try { this.recognition.start(); } catch (err) {}
+            }
+          }, 200);
+        }
       }
     };
   }
 
   startSpeechRecognition() {
-    if (this.recognition && !this.isAgentSpeaking) {
+    if (this.recognition) {
       try { this.recognition.start(); } catch (e) {}
     }
   }
@@ -322,27 +354,40 @@ class SimpleVoiceAgent {
     }
 
     try {
-      const response = await fetch('/voice-agent/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: cleanText,
-          history: this.history,
-          cli: normalizedCli,
-        }),
-      });
+      if (this.ws && this.wsConnected) {
+        this.ws.send(
+          JSON.stringify({
+            event: 'text_input',
+            data: {
+              text: cleanText,
+              history: this.history,
+              cli: normalizedCli,
+            },
+          }),
+        );
+      } else {
+        const response = await fetch('/voice-agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: cleanText,
+            history: this.history,
+            cli: normalizedCli,
+          }),
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (this.isCallActive) {
-        this.statusText.textContent = 'Live Call Active';
+        if (this.isCallActive) {
+          this.statusText.textContent = 'Live Call Active';
 
-        if (data && data.success && data.response) {
-          this.history.push({ role: 'assistant', content: data.response });
-          this.addTranscript('agent', data.response);
+          if (data && data.success && data.response) {
+            this.history.push({ role: 'assistant', content: data.response });
+            this.addTranscript('agent', data.response);
 
-          if (data.audioBuffer) {
-            this.playCompleteAudio(data.audioBuffer);
+            if (data.audioBuffer) {
+              this.playCompleteAudio(data.audioBuffer);
+            }
           }
         }
       }

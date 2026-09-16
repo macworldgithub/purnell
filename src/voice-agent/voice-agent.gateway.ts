@@ -149,6 +149,7 @@ export class VoiceAgentGateway
   handleManualInterrupt(@ConnectedSocket() client: WebSocket) {
     const sessionId = this.clientSessionMap.get(client);
     if (sessionId) {
+      this.voiceAgentService.interruptSession(sessionId);
       this.sendJson(client, {
         event: 'stop_audio',
         data: { reason: 'manual_interrupt' },
@@ -159,12 +160,14 @@ export class VoiceAgentGateway
   @SubscribeMessage('text_input')
   async handleTextInput(
     @ConnectedSocket() client: WebSocket,
-    @MessageBody() payload: { text: string },
+    @MessageBody() payload: { text: string; history?: any[]; cli?: string },
   ) {
     const sessionId = this.clientSessionMap.get(client);
     if (sessionId && payload?.text) {
       const result = await this.voiceAgentService.processTextMessage(
         payload.text,
+        payload.history || [],
+        payload.cli || '',
       );
       this.sendJson(client, {
         event: 'ai_reply',
