@@ -171,4 +171,32 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
       expect(prompt).toContain('[PENTANA LOOKUP — simulated]');
     });
   });
+
+  describe('Phone Number Spoken Formatting & TTS Sanitization', () => {
+    it('should format Australian mobile numbers with phonetic word digits', () => {
+      const { formatPhoneForSpeech } = require('./voice-agent.service');
+      expect(formatPhoneForSpeech('0412000006')).toBe(
+        'zero four one two, zero zero zero, zero zero six',
+      );
+      expect(formatPhoneForSpeech('+61412000006')).toBe(
+        'zero four one two, zero zero zero, zero zero six',
+      );
+    });
+
+    it('should format Australian landline numbers with phonetic word digits', () => {
+      const { formatPhoneForSpeech } = require('./voice-agent.service');
+      expect(formatPhoneForSpeech('0285587000')).toBe(
+        'zero two, eight five five eight, seven zero zero zero',
+      );
+    });
+
+    it('should sanitize AI response text so numbers are pronounced cleanly with phonetic words', () => {
+      const { sanitizeTextForSpeech } = require('./voice-agent.service');
+      const sanitized = sanitizeTextForSpeech(
+        'Call Land Rover Roadside at 1800 808 180 or ring the desk on 0412 000 006.',
+      );
+      expect(sanitized).toContain('one eight zero zero, eight zero eight, one eight zero');
+      expect(sanitized).toContain('zero four one two, zero zero zero, zero zero six');
+    });
+  });
 });

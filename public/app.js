@@ -387,25 +387,31 @@ class SimpleVoiceAgent {
         }),
       });
 
-      const data = await response.json();
       if (this.isCallActive) {
-        this.statusText.textContent = 'Live Call Active';
-      }
+        if (data && data.success && data.response) {
+          this.history.push({ role: 'assistant', content: data.response });
+          this.addTranscript('agent', data.response);
 
-      if (this.isCallActive && data.success && data.response) {
-        this.history.push({ role: 'assistant', content: data.response });
-        this.addTranscript('agent', data.response);
-
-        if (data.audioBuffer) {
-          this.playCompleteAudio(data.audioBuffer);
+          if (data.audioBuffer) {
+            this.playCompleteAudio(data.audioBuffer);
+          } else {
+            this.speakText(data.response);
+          }
         } else {
-          this.speakText(data.response);
+          const fallback = 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can look up your details?';
+          this.history.push({ role: 'assistant', content: fallback });
+          this.addTranscript('agent', fallback);
+          this.speakText(fallback);
         }
       }
     } catch (err) {
       console.error('API Error:', err);
       if (this.isCallActive) {
         this.statusText.textContent = 'Live Call Active';
+        const fallback = 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can look up your details?';
+        this.history.push({ role: 'assistant', content: fallback });
+        this.addTranscript('agent', fallback);
+        this.speakText(fallback);
       }
     } finally {
       this.isProcessingSpeech = false;

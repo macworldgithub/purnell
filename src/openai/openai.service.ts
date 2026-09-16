@@ -133,14 +133,14 @@ ${kbText.trim()}
         function: {
           name: 'lookupPentanaCustomer',
           description:
-            'Look up customer details, open Repair Orders (RO), parts arrival status, or appointment from Pentana by phone, name, or registration.',
+            'Look up customer details, open Repair Orders (RO), parts arrival status, or appointment from Pentana CRM by phone number, customer full name, preferred name, or vehicle registration plate (rego).',
           parameters: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
                 description:
-                  'Caller phone number, vehicle registration plate, or customer full name.',
+                  'Caller phone number, vehicle registration plate (e.g. CF62ZZ), or customer name (e.g. Jacob Wilson, Sarah Chen).',
               },
             },
             required: ['query'],
@@ -229,114 +229,122 @@ ${kbText.trim()}
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> {
-    switch (name) {
-      case 'lookupPentanaCustomer': {
-        const payload = args as LookupCustomerArgs;
-        const query = typeof payload.query === 'string' ? payload.query : '';
+    try {
+      switch (name) {
+        case 'lookupPentanaCustomer': {
+          const payload = args as LookupCustomerArgs;
+          const query = typeof payload.query === 'string' ? payload.query : '';
 
-        // 1. Try CustomerDatabaseService (MongoDB Atlas)
-        const profile =
-          await this.customerDatabaseService.getFullCustomerProfile(query);
-        if (profile && profile.customer) {
-          const c = profile.customer;
-          const v =
-            c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
-          const vDesc = v
-            ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (Rego: ${v.rego || ''})`.trim()
-            : 'Vehicle on file';
-          const ro =
-            profile.repair_orders && profile.repair_orders.length > 0
-              ? profile.repair_orders[0]
-              : null;
-          const bk =
-            profile.service_bookings && profile.service_bookings.length > 0
-              ? profile.service_bookings[0]
-              : null;
-          const pt =
-            profile.parts_orders && profile.parts_orders.length > 0
-              ? profile.parts_orders[0]
-              : null;
-          const ptDesc =
-            pt && pt.lines && pt.lines.length > 0
-              ? `${pt.parts_order_id} (${pt.lines[0].description || 'Parts'} — ${pt.lines[0].status || 'Ordered'})`
-              : pt
-                ? pt.parts_order_id
-                : 'None';
+          // 1. Try CustomerDatabaseService (MongoDB Atlas)
+          const profile =
+            await this.customerDatabaseService.getFullCustomerProfile(query);
+          if (profile && profile.customer) {
+            const c = profile.customer;
+            const v =
+              c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+            const vDesc = v
+              ? `${v.year || ''} ${v.make || ''} ${v.model || ''} (Rego: ${v.rego || ''})`.trim()
+              : 'Vehicle on file';
+            const ro =
+              profile.repair_orders && profile.repair_orders.length > 0
+                ? profile.repair_orders[0]
+                : null;
+            const bk =
+              profile.service_bookings && profile.service_bookings.length > 0
+                ? profile.service_bookings[0]
+                : null;
+            const pt =
+              profile.parts_orders && profile.parts_orders.length > 0
+                ? profile.parts_orders[0]
+                : null;
+            const ptDesc =
+              pt && pt.lines && pt.lines.length > 0
+                ? `${pt.parts_order_id} (${pt.lines[0].description || 'Parts'} — ${pt.lines[0].status || 'Ordered'})`
+                : pt
+                  ? pt.parts_order_id
+                  : 'None';
 
-          const log = `[PENTANA / DMS LOOKUP]\n✓ Record found in Pentana CRM for "${query}":\nCustomer: ${c.customer_name} (ID: ${c.customer_id})\nVehicle: ${vDesc}\nOpen RO: ${ro ? `RO #${ro.ro_number} (${ro.status} — Advisor: ${ro.advisor})` : 'None'}\nUpcoming Booking: ${bk ? `${bk.date} at ${bk.time} (${bk.job_type})` : 'None'}\nParts Order: ${ptDesc}`;
+            const log = `[PENTANA / DMS LOOKUP]\n✓ Record found in Pentana CRM for "${query}":\nCustomer: ${c.customer_name} (ID: ${c.customer_id})\nVehicle: ${vDesc}\nOpen RO: ${ro ? `RO #${ro.ro_number} (${ro.status} — Advisor: ${ro.advisor})` : 'None'}\nUpcoming Booking: ${bk ? `${bk.date} at ${bk.time} (${bk.job_type})` : 'None'}\nParts Order: ${ptDesc}`;
 
+            return JSON.stringify({
+              found: true,
+              simulatedLog: log,
+              customer: {
+                customer_id: c.customer_id,
+                customer_name: c.customer_name,
+                preferred_name: c.preferred_name,
+                mobile: c.mobile,
+                landline: c.landline,
+                vehicles: c.vehicles,
+                repair_orders: profile.repair_orders,
+                service_bookings: profile.service_bookings,
+                parts_orders: profile.parts_orders,
+                authorised_contacts: profile.authorised_contacts,
+              },
+            });
+          }
+
+          // 2. Fallback to static mock data in PentanaService
+          const customer = this.pentanaService.searchCustomer(query);
+          if (!customer) {
+            return JSON.stringify({
+              found: false,
+              message: `[PENTANA LOOKUP]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana CRM. Please check by customer full name or vehicle registration plate.`,
+            });
+          }
           return JSON.stringify({
             found: true,
-            simulatedLog: log,
-            customer: {
-              customer_id: c.customer_id,
-              customer_name: c.customer_name,
-              preferred_name: c.preferred_name,
-              mobile: c.mobile,
-              landline: c.landline,
-              vehicles: c.vehicles,
-              repair_orders: profile.repair_orders,
-              service_bookings: profile.service_bookings,
-              parts_orders: profile.parts_orders,
-              authorised_contacts: profile.authorised_contacts,
-            },
+            simulatedLog: `[PENTANA LOOKUP]\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
+            customer,
           });
         }
 
-        // 2. Fallback to static mock data in PentanaService
-        const customer = this.pentanaService.searchCustomer(query);
-        if (!customer) {
+        case 'checkStaffAvailability': {
+          const payload = args as StaffAvailabilityArgs;
+          const staffName =
+            typeof payload.staffName === 'string' ? payload.staffName : '';
+          const staff = this.pentanaService.checkStaff(staffName);
+          if (!staff) {
+            return JSON.stringify({
+              found: false,
+              message: `Staff member "${staffName}" not found in dealership registry.`,
+            });
+          }
           return JSON.stringify({
-            found: false,
-            message: `[PENTANA LOOKUP]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana CRM.`,
+            found: true,
+            name: staff.name,
+            role: staff.role,
+            status: staff.status,
+            department: staff.department,
           });
         }
-        return JSON.stringify({
-          found: true,
-          simulatedLog: `[PENTANA LOOKUP]\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
-          customer,
-        });
-      }
 
-      case 'checkStaffAvailability': {
-        const payload = args as StaffAvailabilityArgs;
-        const staffName =
-          typeof payload.staffName === 'string' ? payload.staffName : '';
-        const staff = this.pentanaService.checkStaff(staffName);
-        if (!staff) {
+        case 'queryAppointmentSlots': {
           return JSON.stringify({
-            found: false,
-            message: `Staff member "${staffName}" not found in dealership registry.`,
+            slots: this.pentanaService
+              .getAppointmentSlots()
+              .filter((s: AppointmentSlot) => s.available),
           });
         }
-        return JSON.stringify({
-          found: true,
-          name: staff.name,
-          role: staff.role,
-          status: staff.status,
-          department: staff.department,
-        });
-      }
 
-      case 'queryAppointmentSlots': {
-        return JSON.stringify({
-          slots: this.pentanaService
-            .getAppointmentSlots()
-            .filter((s: AppointmentSlot) => s.available),
-        });
-      }
+        case 'createHandoffRecord': {
+          const formatted = this.pentanaService.formatHandoffRecord(args);
+          this.logger.log(`Created Handoff Record:\n${formatted}`);
+          return JSON.stringify({
+            success: true,
+            handoffRecord: formatted,
+          });
+        }
 
-      case 'createHandoffRecord': {
-        const formatted = this.pentanaService.formatHandoffRecord(args);
-        this.logger.log(`Created Handoff Record:\n${formatted}`);
-        return JSON.stringify({
-          success: true,
-          handoffRecord: formatted,
-        });
+        default:
+          return JSON.stringify({ error: `Unknown tool ${name}` });
       }
-
-      default:
-        return JSON.stringify({ error: `Unknown tool ${name}` });
+    } catch (err: unknown) {
+      this.logger.error(`Error executing tool call ${name}:`, err);
+      return JSON.stringify({
+        found: false,
+        error: `Tool execution failed: ${String(err)}`,
+      });
     }
   }
 
@@ -374,61 +382,84 @@ ${kbText.trim()}
     ];
     const tools = this.getAvailableTools();
     const chatModel = this.getChatModel();
-
-    const response = await this.openai.chat.completions.create({
-      model: chatModel,
-      messages: fullMessages,
-      tools,
-      temperature: this.config.temperature,
-    });
-
-    const choice = response.choices[0];
-    const message = choice.message;
     const toolLogs: string[] = [];
 
-    if (message.tool_calls && message.tool_calls.length > 0) {
-      const followUpMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-        [...fullMessages, message];
+    const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+      [...fullMessages];
+    const maxToolIterations = 5;
+    let iteration = 0;
 
-      for (const toolCall of message.tool_calls) {
-        if ('function' in toolCall && toolCall.function) {
-          const toolName = toolCall.function.name;
-          const toolArgs = JSON.parse(
-            toolCall.function.arguments || '{}',
-          ) as Record<string, unknown>;
-          const toolResult = await this.executeToolCall(toolName, toolArgs);
+    while (iteration < maxToolIterations) {
+      iteration++;
 
-          try {
-            const parsed = JSON.parse(toolResult) as ParsedToolResult;
-            if (typeof parsed.simulatedLog === 'string') {
-              toolLogs.push(parsed.simulatedLog);
+      try {
+        const response = await this.openai.chat.completions.create({
+          model: chatModel,
+          messages: currentMessages,
+          tools,
+          temperature: this.config.temperature,
+        });
+
+        const choice = response.choices[0];
+        const message = choice?.message;
+        if (!message) break;
+
+        // If the model invoked tools, execute them and continue the reasoning loop
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          currentMessages.push(message);
+
+          for (const toolCall of message.tool_calls) {
+            if ('function' in toolCall && toolCall.function) {
+              const toolName = toolCall.function.name;
+              let toolArgs: Record<string, unknown> = {};
+              try {
+                toolArgs = JSON.parse(
+                  toolCall.function.arguments || '{}',
+                ) as Record<string, unknown>;
+              } catch {
+                toolArgs = {};
+              }
+
+              const toolResult = await this.executeToolCall(toolName, toolArgs);
+
+              try {
+                const parsed = JSON.parse(toolResult) as ParsedToolResult;
+                if (typeof parsed.simulatedLog === 'string') {
+                  toolLogs.push(parsed.simulatedLog);
+                }
+              } catch {
+                // ignore
+              }
+
+              currentMessages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: toolResult,
+              });
             }
-          } catch {
-            // ignore
           }
-
-          followUpMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: toolResult,
-          });
+          // Continue loop so model can process the tool results or execute next step
+          continue;
         }
+
+        // Return final text response from the model
+        if (message.content && message.content.trim().length > 0) {
+          return {
+            text: message.content.trim(),
+            toolLogs,
+          };
+        }
+
+        break;
+      } catch (err: unknown) {
+        this.logger.error(`OpenAI completion error on iteration ${iteration}:`, err);
+        break;
       }
-
-      const finalResponse = await this.openai.chat.completions.create({
-        model: chatModel,
-        messages: followUpMessages,
-        temperature: this.config.temperature,
-      });
-
-      return {
-        text: finalResponse.choices[0]?.message?.content || '',
-        toolLogs,
-      };
     }
 
+    // Safe fallback if loop terminated without content
     return {
-      text: message.content || '',
+      text: "Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?",
       toolLogs,
     };
   }

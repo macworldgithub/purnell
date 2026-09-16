@@ -24,16 +24,75 @@ import {
 } from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
 
-function formatPhoneForSpeech(phone: string): string {
+const DIGIT_WORDS: Record<string, string> = {
+  '0': 'zero',
+  '1': 'one',
+  '2': 'two',
+  '3': 'three',
+  '4': 'four',
+  '5': 'five',
+  '6': 'six',
+  '7': 'seven',
+  '8': 'eight',
+  '9': 'nine',
+};
+
+export function digitsToWords(digits: string): string {
+  return digits
+    .split('')
+    .map((d) => DIGIT_WORDS[d] || d)
+    .join(' ');
+}
+
+export function formatPhoneForSpeech(phone: string): string {
   if (!phone) return 'your number';
   let digits = phone.replace(/\D/g, '');
   if (digits.startsWith('61') && digits.length >= 10) {
     digits = '0' + digits.slice(2);
   }
   if (digits.length === 10) {
-    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+    // Australian mobile: 0412 000 006 -> "zero four one two, zero zero zero, zero zero six"
+    if (digits.startsWith('04')) {
+      return `${digitsToWords(digits.slice(0, 4))}, ${digitsToWords(digits.slice(4, 7))}, ${digitsToWords(digits.slice(7))}`;
+    }
+    // Australian landline: 02 8558 7000 -> "zero two, eight five five eight, seven zero zero zero"
+    return `${digitsToWords(digits.slice(0, 2))}, ${digitsToWords(digits.slice(2, 6))}, ${digitsToWords(digits.slice(6))}`;
+  }
+  if (digits.length >= 6) {
+    return digitsToWords(digits);
   }
   return phone;
+}
+
+/**
+ * Sanitizes AI response text by converting phone numbers and digit strings
+ * to explicit phonetic English words for 100% accurate TTS pronunciation.
+ */
+export function sanitizeTextForSpeech(text: string): string {
+  if (!text) return '';
+  let sanitized = text;
+
+  // 1800 numbers (e.g. 1800 808 180) -> "one eight zero zero, eight zero eight, one eight zero"
+  sanitized = sanitized.replace(/\b1800\s*(\d{3})\s*(\d{3})\b/g, (_m, g1, g2) => {
+    return `one eight zero zero, ${digitsToWords(g1)}, ${digitsToWords(g2)}`;
+  });
+
+  // Australian mobiles (04XX XXX XXX or +614XXXXXXXX or 04XXXXXXXX)
+  sanitized = sanitized.replace(/(?:\+61|0)(4\d{2})[\s-]?(\d{3})[\s-]?(\d{3})\b/g, (_m, g1, g2, g3) => {
+    return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
+  });
+
+  // Australian landlines (02/03/07/08 XXXX XXXX)
+  sanitized = sanitized.replace(/(?:\+61|0)([2378]\d)[\s-]?(\d{4})[\s-]?(\d{4})\b/g, (_m, g1, g2, g3) => {
+    return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
+  });
+
+  // Isolated 5-10 digit numbers: convert to spaced words
+  sanitized = sanitized.replace(/\b(\d{5,10})\b/g, (_match, digits) => {
+    return digitsToWords(digits);
+  });
+
+  return sanitized;
 }
 
 export interface ConversationTurn {
@@ -89,11 +148,15 @@ export class VoiceAgentService {
     profile?: FullCustomerProfile | null,
     cli?: string,
   ): string {
+    const spokenCli = formatPhoneForSpeech(cli || '');
     if (!profile || !profile.customer) {
       return [
         'CALLER IDENTIFICATION STATUS: Unidentified / Ambiguous',
-        `INCOMING PHONE (CLI): ${cli || 'Unknown'}`,
-        'INSTRUCTION: If caller states their name, vehicle registration plate, or phone number, use the "lookupPentanaCustomer" tool to fetch their full record from Pentana.',
+        `INCOMING PHONE (CLI): ${cli || 'Unknown'} (Spoken: "${spokenCli}")`,
+        'OPERATIONAL INSTRUCTIONS FOR UNIDENTIFIED CALLER:',
+        '1. If the caller provides their full name, vehicle registration plate (rego), or phone number, IMMEDIATELY call the "lookupPentanaCustomer" tool to fetch their full profile from Pentana CRM.',
+        '2. If no record is found on the first search, politely check for their full name and vehicle registration plate so you can search the database again.',
+        '3. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
       ].join('\n');
     }
 
@@ -155,7 +218,8 @@ export class VoiceAgentService {
       'OPERATIONAL INSTRUCTIONS:',
       '1. You already have this client verified in CRM memory across all turns. NEVER lose or forget this context.',
       '2. Answer inquiries about vehicle status, service bookings, parts, and advisors directly using the above data.',
-      '3. Be natural, concise, and professional. Confirm name and clarify requests without reciting the whole database at once.',
+      '3. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
+      '4. Be natural, concise, and professional. Confirm name and clarify requests without reciting the whole database at once.',
     ].join('\n');
   }
 
@@ -264,8 +328,9 @@ export class VoiceAgentService {
           session.isSpeaking = true;
         }
 
+        const ttsText = sanitizeTextForSpeech(greetingText);
         await this.elevenLabsService.streamSpeech(
-          greetingText,
+          ttsText,
           (chunk) => {
             if (!abortCtrl.signal.aborted) {
               callbacks.onAudioChunk(chunk);
@@ -293,7 +358,6 @@ export class VoiceAgentService {
     customer?: any;
   }> {
     const normalizedCli = normalizeAustralianPhone(cli || '');
-    const displayCli = normalizedCli || 'your number';
 
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
@@ -315,8 +379,9 @@ export class VoiceAgentService {
     let audioBase64: string | undefined;
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const ttsText = sanitizeTextForSpeech(greetingText);
         const pcmBuffer =
-          await this.elevenLabsService.generateSpeechBuffer(greetingText);
+          await this.elevenLabsService.generateSpeechBuffer(ttsText);
         audioBase64 = pcmBuffer.toString('base64');
       }
     } catch (err: unknown) {
@@ -383,6 +448,15 @@ export class VoiceAgentService {
   ): Promise<void> {
     session.history.push({ role: 'user', content: userText });
 
+    // If caller was unidentified, attempt lookup from speech
+    if (!session.customerProfile) {
+      const foundProfile =
+        await this.customerDatabaseService.getFullCustomerProfile(userText);
+      if (foundProfile) {
+        session.customerProfile = foundProfile;
+      }
+    }
+
     // Build messages from history
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
       session.history.map((m) => ({
@@ -413,8 +487,9 @@ export class VoiceAgentService {
       session.isSpeaking = true;
       session.lastSpeechTime = Date.now();
 
+      const ttsText = sanitizeTextForSpeech(aiReply);
       await this.elevenLabsService.streamSpeech(
-        aiReply,
+        ttsText,
         (chunk) => {
           // Verify turn hasn't been interrupted
           if (
@@ -451,21 +526,30 @@ export class VoiceAgentService {
     cli: string = '',
   ): Promise<{ text: string; toolLogs?: string[]; audioBuffer?: string }> {
     const normalizedCli = normalizeAustralianPhone(cli || '');
-    const profile = normalizedCli
+    
+    // 1. Resolve profile by CLI or userText
+    let profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
           normalizedCli,
         )
       : null;
+
+    if (!profile && userText) {
+      profile = await this.customerDatabaseService.getFullCustomerProfile(userText);
+    }
 
     const customerContext = this.formatCustomerContextForPrompt(
       profile,
       normalizedCli,
     );
 
-    const fullHistory: ConversationTurn[] = [
-      ...history,
-      { role: 'user', content: userText },
-    ];
+    // Build message history without duplicate user turns
+    const fullHistory: ConversationTurn[] = [...history];
+    const lastMsg = fullHistory[fullHistory.length - 1];
+    if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== userText) {
+      fullHistory.push({ role: 'user', content: userText });
+    }
+
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
       fullHistory.map((m) => ({
         role: m.role,
@@ -480,8 +564,9 @@ export class VoiceAgentService {
     let audioBase64: string | undefined;
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const ttsText = sanitizeTextForSpeech(result.text);
         const pcmBuffer = await this.elevenLabsService.generateSpeechBuffer(
-          result.text,
+          ttsText,
         );
         audioBase64 = pcmBuffer.toString('base64');
       }
