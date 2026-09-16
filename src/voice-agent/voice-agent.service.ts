@@ -72,9 +72,12 @@ export function sanitizeTextForSpeech(text: string): string {
   if (!text) return '';
   let sanitized = text;
 
-  // 1800 numbers (e.g. 1800 808 180) -> "one eight zero zero, eight zero eight, one eight zero"
+  // 1800 & 1300 numbers (e.g. 1800 808 180, 1800 819 181, 1300 XXX XXX)
   sanitized = sanitized.replace(/\b1800\s*(\d{3})\s*(\d{3})\b/g, (_m, g1, g2) => {
     return `one eight zero zero, ${digitsToWords(g1)}, ${digitsToWords(g2)}`;
+  });
+  sanitized = sanitized.replace(/\b1300\s*(\d{3})\s*(\d{3})\b/g, (_m, g1, g2) => {
+    return `one three zero zero, ${digitsToWords(g1)}, ${digitsToWords(g2)}`;
   });
 
   // Australian mobiles (04XX XXX XXX or +614XXXXXXXX or 04XXXXXXXX)
@@ -82,13 +85,26 @@ export function sanitizeTextForSpeech(text: string): string {
     return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
   });
 
-  // Australian landlines (02/03/07/08 XXXX XXXX)
-  sanitized = sanitized.replace(/(?:\+61|0)([2378]\d)[\s-]?(\d{4})[\s-]?(\d{4})\b/g, (_m, g1, g2, g3) => {
+  // Australian landlines (02/03/07/08 XXXX XXXX or (02) XXXX XXXX)
+  sanitized = sanitized.replace(/(?:\+61|0|\(0)([2378]\d)\)?[\s-]?(\d{4})[\s-]?(\d{4})\b/g, (_m, g1, g2, g3) => {
     return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
   });
 
-  // Isolated 5-10 digit numbers: convert to spaced words
-  sanitized = sanitized.replace(/\b(\d{5,10})\b/g, (_match, digits) => {
+  // RO numbers (e.g. RO #45821 or RO 45821)
+  sanitized = sanitized.replace(/\bRO\s*#?(\d+)\b/gi, (_m, roNum) => {
+    return `R O number ${digitsToWords(roNum)}`;
+  });
+
+  // Vehicle Rego patterns: 2-3 uppercase letters followed by 2-4 digits/letters (e.g. CF62ZZ, XYZ-001)
+  sanitized = sanitized.replace(/\b([A-Z]{2,3})[\s-]?(\d{2,4})[\s-]?([A-Z]{0,2})\b/g, (_m, l1, num, l2) => {
+    const letters1 = l1.split('').join(' ');
+    const numWords = digitsToWords(num);
+    const letters2 = l2 ? ' ' + l2.split('').join(' ') : '';
+    return `${letters1} ${numWords}${letters2}`;
+  });
+
+  // Isolated 3-10 digit numbers: convert to spaced words
+  sanitized = sanitized.replace(/\b(\d{3,10})\b/g, (_match, digits) => {
     return digitsToWords(digits);
   });
 
@@ -309,9 +325,9 @@ export class VoiceAgentService {
     if (profile && profile.customer) {
       const c = profile.customer;
       const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${spokenCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
+      greetingText = `Purnell Motors, Blakehurst. I can see from the number you called from that you're registered with us as ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
-      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
+      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?`;
     }
 
     if (session) {
@@ -365,15 +381,13 @@ export class VoiceAgentService {
         )
       : null;
 
-    const spokenCli = formatPhoneForSpeech(cli || normalizedCli);
-
     let greetingText = '';
     if (profile && profile.customer) {
       const c = profile.customer;
       const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I see you're calling from ${spokenCli}, registered to ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
+      greetingText = `Purnell Motors, Blakehurst. I can see from the number you called from that you're registered with us as ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
     } else {
-      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration so I can pull up your file, and how may I assist you today?`;
+      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?`;
     }
 
     let audioBase64: string | undefined;

@@ -73,14 +73,14 @@ export const VOICE_AGENT_CONFIG: VoiceAgentConfig = {
     temperature: 0.6,
     vad: {
       type: 'server_vad',
-      // 0.7: Tuned for soft speech and conversational Australian English
-      threshold: 0.7,
+      // 0.75: Tuned to ignore low-level background noise and speaker echo
+      threshold: 0.75,
       // 300ms: Captures starts of sentences accurately
       prefix_padding_ms: 300,
-      // 1000ms: Natural conversational turn cadence
-      silence_duration_ms: 1000,
-      // 500ms: Responsive barge-in cutoff
-      barge_in_grace_ms: 500,
+      // 1200ms: Natural conversational turn cadence without premature cutoffs
+      silence_duration_ms: 1200,
+      // 800ms: Stable barge-in grace period
+      barge_in_grace_ms: 800,
     },
   },
   deepgram: {

@@ -22,7 +22,6 @@ class SimpleVoiceAgent {
     this.isProcessingSpeech = false;
     this.ws = null;
     this.wsConnected = false;
-    this.wsTimeout = null;
     this.recognition = null;
     this.history = [];
     this.audioContext = null;
@@ -122,10 +121,7 @@ class SimpleVoiceAgent {
       this.placeholder.style.display = 'none';
     }
 
-    // Start speech recognition for user microphone
-    this.startSpeechRecognition();
-
-    // Connect voice pipeline (tries WebSocket, seamlessly falls back to REST on Vercel)
+    // Connect voice pipeline
     this.connectPipeline();
   }
 
@@ -138,11 +134,6 @@ class SimpleVoiceAgent {
     if (this.speechSilenceTimer) {
       clearTimeout(this.speechSilenceTimer);
       this.speechSilenceTimer = null;
-    }
-
-    if (this.wsTimeout) {
-      clearTimeout(this.wsTimeout);
-      this.wsTimeout = null;
     }
 
     if (this.recognition) {
@@ -163,7 +154,7 @@ class SimpleVoiceAgent {
     this.statusText.textContent = 'Call ended';
   }
 
-  // --- Voice Pipeline Connection (WebSocket with REST Fallback) ---
+  // --- Voice Pipeline Connection (WebSocket with Clean Fallback) ---
   connectPipeline() {
     const rawCli = this.cliInput ? this.cliInput.value : '';
     const normalizedCli = normalizeAustralianPhone(rawCli);
@@ -171,30 +162,14 @@ class SimpleVoiceAgent {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/voice?cli=${encodeURIComponent(normalizedCli)}`;
 
-    let wsSucceeded = false;
-
     try {
       this.ws = new WebSocket(wsUrl);
 
-      // On serverless hosts (like Vercel), WebSockets fail or hang.
-      // If WebSocket doesn't establish within 1.5s, switch to REST pipeline.
-      this.wsTimeout = setTimeout(() => {
-        if (!wsSucceeded && this.isCallActive) {
-          console.log('WebSocket not active; using HTTP REST pipeline.');
-          if (this.ws) {
-            try { this.ws.close(); } catch (e) {}
-            this.ws = null;
-          }
-          this.initRestGreeting(normalizedCli);
-        }
-      }, 1500);
-
       this.ws.onopen = () => {
-        wsSucceeded = true;
         this.wsConnected = true;
-        if (this.wsTimeout) clearTimeout(this.wsTimeout);
         if (this.isCallActive) {
           this.statusText.textContent = 'Live Call Active';
+          this.startSpeechRecognition();
         }
       };
 
@@ -219,9 +194,8 @@ class SimpleVoiceAgent {
       };
 
       this.ws.onerror = () => {
-        if (!wsSucceeded && this.isCallActive) {
-          if (this.wsTimeout) clearTimeout(this.wsTimeout);
-          this.wsConnected = false;
+        this.wsConnected = false;
+        if (this.isCallActive) {
           this.initRestGreeting(normalizedCli);
         }
       };
@@ -234,10 +208,11 @@ class SimpleVoiceAgent {
     }
   }
 
-  // --- REST Initial Greeting Fallback (for Vercel & Non-WebSocket environments) ---
+  // --- REST Initial Greeting Fallback (for non-WebSocket environments) ---
   async initRestGreeting(cli) {
     if (!this.isCallActive) return;
     this.statusText.textContent = 'Live Call Active';
+    this.startSpeechRecognition();
 
     try {
       const response = await fetch('/voice-agent/start', {
@@ -253,19 +228,14 @@ class SimpleVoiceAgent {
 
         if (data.audioBuffer) {
           this.playCompleteAudio(data.audioBuffer);
-        } else {
-          this.speakText(data.greeting);
         }
       }
     } catch (err) {
       console.error('Initial greeting request failed:', err);
-      const fallbackGreeting = 'Purnell Motors, Blakehurst. How can I assist you with your vehicle today?';
-      this.addTranscript('agent', fallbackGreeting);
-      this.speakText(fallbackGreeting);
     }
   }
 
-  // --- Speech Recognition with Utterance Debouncing & Instant Barge-in ---
+  // --- Speech Recognition with Echo Prevention & Debounce ---
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -278,57 +248,36 @@ class SimpleVoiceAgent {
     const finalizeAndSend = () => {
       const textToSend = this.accumulatedTranscript.trim();
       this.accumulatedTranscript = '';
-      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
+      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
         this.handleUserSpeech(textToSend);
       }
     };
 
-    // Immediate acoustic barge-in triggers when caller speaks
-    this.recognition.onspeechstart = () => {
-      if (this.isAgentSpeaking) {
-        this.stopAudio();
-        if (this.ws && this.wsConnected) {
-          try {
-            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
-          } catch (e) {}
-        }
-      }
-    };
-
-    this.recognition.onsoundstart = () => {
-      if (this.isAgentSpeaking) {
-        this.stopAudio();
-        if (this.ws && this.wsConnected) {
-          try {
-            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
-          } catch (e) {}
-        }
-      }
-    };
-
     this.recognition.onresult = (event) => {
-      // If user starts speaking while agent is talking, cut off agent voice immediately
+      // Echo suppression: Ignore mic results while the agent audio is actively playing through speakers
       if (this.isAgentSpeaking) {
-        this.stopAudio();
-        if (this.ws && this.wsConnected) {
-          try {
-            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking' }));
-          } catch (e) {}
-        }
+        return;
       }
 
-      // Collect the current spoken sentence
-      let latestChunk = '';
+      let finalChunk = '';
+      let interimChunk = '';
+
       for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          this.accumulatedTranscript += ' ' + chunk;
+        const item = event.results[i];
+        if (item.isFinal) {
+          finalChunk += ' ' + item[0].transcript;
         } else {
-          latestChunk += chunk;
+          interimChunk = item[0].transcript;
         }
       }
 
-      const totalSpoken = (this.accumulatedTranscript + ' ' + latestChunk).trim();
+      if (finalChunk.trim()) {
+        this.accumulatedTranscript = (this.accumulatedTranscript + ' ' + finalChunk).trim();
+      } else if (interimChunk.trim()) {
+        this.accumulatedTranscript = interimChunk.trim();
+      }
+
+      const totalSpoken = this.accumulatedTranscript.trim();
 
       // Reset debouncing silence timer
       if (this.speechSilenceTimer) {
@@ -336,14 +285,11 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // If text has been accumulated, wait for 750ms of natural silence before sending
-      if (totalSpoken.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
+      // Wait for 1200ms of natural silence after user speaks before submitting turn
+      if (totalSpoken.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
         this.speechSilenceTimer = setTimeout(() => {
-          if (!this.accumulatedTranscript.trim() && latestChunk.trim()) {
-            this.accumulatedTranscript = latestChunk;
-          }
           finalizeAndSend();
-        }, 750);
+        }, 1200);
       }
     };
 
@@ -387,31 +333,24 @@ class SimpleVoiceAgent {
         }),
       });
 
+      const data = await response.json();
+
       if (this.isCallActive) {
+        this.statusText.textContent = 'Live Call Active';
+
         if (data && data.success && data.response) {
           this.history.push({ role: 'assistant', content: data.response });
           this.addTranscript('agent', data.response);
 
           if (data.audioBuffer) {
             this.playCompleteAudio(data.audioBuffer);
-          } else {
-            this.speakText(data.response);
           }
-        } else {
-          const fallback = 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can look up your details?';
-          this.history.push({ role: 'assistant', content: fallback });
-          this.addTranscript('agent', fallback);
-          this.speakText(fallback);
         }
       }
     } catch (err) {
       console.error('API Error:', err);
       if (this.isCallActive) {
         this.statusText.textContent = 'Live Call Active';
-        const fallback = 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can look up your details?';
-        this.history.push({ role: 'assistant', content: fallback });
-        this.addTranscript('agent', fallback);
-        this.speakText(fallback);
       }
     } finally {
       this.isProcessingSpeech = false;
@@ -515,22 +454,6 @@ class SimpleVoiceAgent {
     this.playPcmChunk(base64Data);
   }
 
-  speakText(text) {
-    if (!('speechSynthesis' in window)) return;
-    this.stopAudio();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-AU';
-    this.isAgentSpeaking = true;
-    utterance.onend = () => {
-      this.isAgentSpeaking = false;
-    };
-    utterance.onerror = () => {
-      this.isAgentSpeaking = false;
-    };
-    window.speechSynthesis.speak(utterance);
-  }
-
   stopAudio() {
     this.isAgentSpeaking = false;
     for (const src of this.activeAudioSources) {
@@ -540,10 +463,6 @@ class SimpleVoiceAgent {
     }
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
-
-    if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
-    }
   }
 
   escapeHtml(str) {
