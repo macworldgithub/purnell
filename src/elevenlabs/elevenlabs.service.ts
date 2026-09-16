@@ -123,6 +123,8 @@ export class ElevenLabsService {
       }
 
       const reader = response.body.getReader();
+      let leftover = Buffer.alloc(0);
+
       while (true) {
         if (abortSignal?.aborted) {
           this.logger.log(
@@ -137,9 +139,28 @@ export class ElevenLabsService {
         }
 
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // Flush any remaining even-aligned PCM data before closing
+          if (leftover.length > 0 && !abortSignal?.aborted) {
+            const evenLength = leftover.length - (leftover.length % 2);
+            if (evenLength > 0) {
+              onChunk(leftover.subarray(0, evenLength));
+            }
+          }
+          break;
+        }
+
         if (value && !abortSignal?.aborted) {
-          onChunk(Buffer.from(value));
+          const combined = leftover.length > 0
+            ? Buffer.concat([leftover, Buffer.from(value)])
+            : Buffer.from(value);
+          const evenLength = combined.length - (combined.length % 2);
+          if (evenLength > 0) {
+            onChunk(combined.subarray(0, evenLength));
+            leftover = combined.subarray(evenLength);
+          } else {
+            leftover = combined;
+          }
         }
       }
     } catch (error: unknown) {

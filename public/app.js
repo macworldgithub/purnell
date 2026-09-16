@@ -27,6 +27,7 @@ class SimpleVoiceAgent {
     this.audioContext = null;
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
+    this.pcmLeftoverBytes = null;
 
     // Speech accumulation & debouncing state
     this.accumulatedTranscript = '';
@@ -434,13 +435,28 @@ class SimpleVoiceAgent {
     try {
       const binaryStr = atob(base64Data);
       const len = binaryStr.length;
-      const bytes = new Uint8Array(len);
+      const rawBytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
+        rawBytes[i] = binaryStr.charCodeAt(i);
+      }
+
+      let bytes = rawBytes;
+      if (this.pcmLeftoverBytes && this.pcmLeftoverBytes.length > 0) {
+        const merged = new Uint8Array(this.pcmLeftoverBytes.length + rawBytes.length);
+        merged.set(this.pcmLeftoverBytes, 0);
+        merged.set(rawBytes, this.pcmLeftoverBytes.length);
+        bytes = merged;
+        this.pcmLeftoverBytes = null;
+      }
+
+      // Ensure 16-bit PCM word alignment (2 bytes per sample) to prevent high/low byte inversion
+      if (bytes.length % 2 !== 0) {
+        this.pcmLeftoverBytes = bytes.slice(bytes.length - 1);
+        bytes = bytes.subarray(0, bytes.length - 1);
       }
 
       const sampleRate = 16000;
-      const numSamples = Math.floor(bytes.length / 2);
+      const numSamples = bytes.length / 2;
       if (numSamples === 0) return null;
 
       const audioBuffer = this.audioContext.createBuffer(1, numSamples, sampleRate);
@@ -472,8 +488,9 @@ class SimpleVoiceAgent {
     source.connect(this.audioContext.destination);
 
     const currentTime = this.audioContext.currentTime;
+    // Add a small 15ms buffer when starting/falling behind to prevent buffer underrun pops
     if (this.nextAudioStartTime < currentTime) {
-      this.nextAudioStartTime = currentTime;
+      this.nextAudioStartTime = currentTime + 0.015;
     }
 
     source.start(this.nextAudioStartTime);
@@ -500,9 +517,11 @@ class SimpleVoiceAgent {
 
   stopAudio() {
     this.isAgentSpeaking = false;
+    this.pcmLeftoverBytes = null;
     for (const src of this.activeAudioSources) {
       try {
         src.stop();
+        src.disconnect();
       } catch (e) {}
     }
     this.activeAudioSources = [];
