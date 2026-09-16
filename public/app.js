@@ -235,7 +235,7 @@ class SimpleVoiceAgent {
     }
   }
 
-  // --- Speech Recognition with Echo Prevention & Debounce ---
+  // --- Speech Recognition with Echo Prevention & Fresh Turn Buffering ---
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -246,38 +246,37 @@ class SimpleVoiceAgent {
     this.recognition.lang = 'en-AU';
 
     const finalizeAndSend = () => {
-      const textToSend = this.accumulatedTranscript.trim();
+      const textToSend = (this.accumulatedTranscript || '').trim();
       this.accumulatedTranscript = '';
+      if (this.speechSilenceTimer) {
+        clearTimeout(this.speechSilenceTimer);
+        this.speechSilenceTimer = null;
+      }
+
+      // Reset recognition buffer for the next turn
+      try { this.recognition.stop(); } catch (e) {}
+
       if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
         this.handleUserSpeech(textToSend);
       }
     };
 
     this.recognition.onresult = (event) => {
-      // Echo suppression: Ignore mic results while the agent audio is actively playing through speakers
+      // Echo gate: completely ignore microphone if the agent is actively speaking
       if (this.isAgentSpeaking) {
         return;
       }
 
-      let finalChunk = '';
-      let interimChunk = '';
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
+      // Read current turn transcript directly from event.results (no duplicate string compounding)
+      let turnTranscript = '';
+      for (let i = 0; i < event.results.length; ++i) {
         const item = event.results[i];
-        if (item.isFinal) {
-          finalChunk += ' ' + item[0].transcript;
-        } else {
-          interimChunk = item[0].transcript;
+        if (item && item[0] && item[0].transcript) {
+          turnTranscript += item[0].transcript + ' ';
         }
       }
 
-      if (finalChunk.trim()) {
-        this.accumulatedTranscript = (this.accumulatedTranscript + ' ' + finalChunk).trim();
-      } else if (interimChunk.trim()) {
-        this.accumulatedTranscript = interimChunk.trim();
-      }
-
-      const totalSpoken = this.accumulatedTranscript.trim();
+      this.accumulatedTranscript = turnTranscript.trim();
 
       // Reset debouncing silence timer
       if (this.speechSilenceTimer) {
@@ -285,23 +284,23 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // Wait for 1200ms of natural silence after user speaks before submitting turn
-      if (totalSpoken.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
+      // Wait for 1000ms of silence after user finishes speaking before sending turn
+      if (this.accumulatedTranscript.length > 0 && this.isCallActive && !this.isProcessingSpeech && !this.isAgentSpeaking) {
         this.speechSilenceTimer = setTimeout(() => {
           finalizeAndSend();
-        }, 1200);
+        }, 1000);
       }
     };
 
     this.recognition.onend = () => {
-      if (this.isCallActive) {
+      if (this.isCallActive && !this.isAgentSpeaking) {
         try { this.recognition.start(); } catch (e) {}
       }
     };
   }
 
   startSpeechRecognition() {
-    if (this.recognition) {
+    if (this.recognition && !this.isAgentSpeaking) {
       try { this.recognition.start(); } catch (e) {}
     }
   }
