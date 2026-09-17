@@ -183,11 +183,11 @@ body {
 
 /* Transcript Section */
 .transcript-section {
+  display: none !important;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 20px;
-  display: flex;
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
@@ -247,7 +247,7 @@ body {
 }
 
 .transcript-entry {
-  display: flex;
+  display: none !important;
   flex-direction: column;
   gap: 4px;
   padding: 10px 14px;

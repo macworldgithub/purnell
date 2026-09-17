@@ -404,18 +404,8 @@ class SimpleVoiceAgent {
 
   // --- Transcript Log Formatting & Auto-scroll ---
   addTranscript(role, text) {
-    const entry = document.createElement('div');
-    entry.className = `transcript-entry ${role}`;
-
-    const roleName = role === 'agent' ? 'Voice Agent' : 'User';
-
-    entry.innerHTML = `
-      <span class="entry-role">${roleName}</span>
-      <span class="entry-text">${this.escapeHtml(text)}</span>
-    `;
-
-    this.transcriptBox.appendChild(entry);
-    this.scrollToBottom();
+    // Neither agent nor user transcripts are visible on the frontend
+    return;
   }
 
   scrollToBottom() {
