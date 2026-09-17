@@ -170,9 +170,10 @@ export class VoiceAgentService {
         'CALLER IDENTIFICATION STATUS: Unidentified / Ambiguous',
         `INCOMING PHONE (CLI): ${cli || 'Unknown'} (Spoken: "${spokenCli}")`,
         'OPERATIONAL INSTRUCTIONS FOR UNIDENTIFIED CALLER:',
-        '1. If the caller provides their full name, vehicle registration plate (rego), or phone number, IMMEDIATELY call the "lookupPentanaCustomer" tool to fetch their full profile from Pentana CRM.',
-        '2. If no record is found on the first search, politely check for their full name and vehicle registration plate so you can search the database again.',
-        '3. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
+        '1. Do not disclose, confirm, deny, or repeat any customer name, registration, vehicle, booking, repair order, or other personal data while the caller is unverified.',
+        '2. Once the caller provides both a full name and registration plate, use the "verifyPentanaCustomer" tool so both factors must resolve to the same CRM record. Do not use separate "lookupPentanaCustomer" calls to verify an unknown or third-party caller.',
+        '3. Only use returned customer data if the verification result is verified: true. If verification fails, say only that the details could not be verified and offer a message or transfer without revealing which detail matched.',
+        '4. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
       ].join('\n');
     }
 

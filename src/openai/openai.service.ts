@@ -15,6 +15,11 @@ interface LookupCustomerArgs {
   query?: string;
 }
 
+interface VerifyCustomerArgs {
+  customerName?: string;
+  registration?: string;
+}
+
 interface StaffAvailabilityArgs {
   staffName?: string;
 }
@@ -131,6 +136,28 @@ ${kbText.trim()}
       {
         type: 'function',
         function: {
+          name: 'verifyPentanaCustomer',
+          description:
+            'Verify an unknown or third-party caller by checking that their customer full name and vehicle registration belong to the same Pentana CRM record. Never use this result to disclose details unless verified is true.',
+          parameters: {
+            type: 'object',
+            properties: {
+              customerName: {
+                type: 'string',
+                description: 'Customer full name supplied by the caller.',
+              },
+              registration: {
+                type: 'string',
+                description: 'Vehicle registration plate supplied by the caller.',
+              },
+            },
+            required: ['customerName', 'registration'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'lookupPentanaCustomer',
           description:
             'Look up customer details, open Repair Orders (RO), parts arrival status, or appointment from Pentana CRM by phone number, customer full name, preferred name, or vehicle registration plate (rego).',
@@ -231,6 +258,61 @@ ${kbText.trim()}
   ): Promise<string> {
     try {
       switch (name) {
+        case 'verifyPentanaCustomer': {
+          const payload = args as VerifyCustomerArgs;
+          const customerName =
+            typeof payload.customerName === 'string'
+              ? payload.customerName.trim()
+              : '';
+          const registration =
+            typeof payload.registration === 'string'
+              ? payload.registration.trim()
+              : '';
+
+          if (!customerName || !registration) {
+            return JSON.stringify({
+              verified: false,
+              message:
+                'Unable to verify those details. Please check the information and try again.',
+            });
+          }
+
+          const [nameProfile, registrationProfile] = await Promise.all([
+            this.customerDatabaseService.getFullCustomerProfile(customerName),
+            this.customerDatabaseService.getFullCustomerProfile(registration),
+          ]);
+          const nameCustomer = nameProfile?.customer;
+          const registrationCustomer = registrationProfile?.customer;
+
+          if (
+            !nameCustomer ||
+            !registrationCustomer ||
+            nameCustomer.customer_id !== registrationCustomer.customer_id
+          ) {
+            return JSON.stringify({
+              verified: false,
+              message:
+                'Unable to verify those details. Please check the information and try again.',
+            });
+          }
+
+          return JSON.stringify({
+            verified: true,
+            customer: {
+              customer_id: nameCustomer.customer_id,
+              customer_name: nameCustomer.customer_name,
+              preferred_name: nameCustomer.preferred_name,
+              mobile: nameCustomer.mobile,
+              landline: nameCustomer.landline,
+              vehicles: nameCustomer.vehicles,
+              repair_orders: nameProfile?.repair_orders || [],
+              service_bookings: nameProfile?.service_bookings || [],
+              parts_orders: nameProfile?.parts_orders || [],
+              authorised_contacts: nameProfile?.authorised_contacts || null,
+            },
+          });
+        }
+
         case 'lookupPentanaCustomer': {
           const payload = args as LookupCustomerArgs;
           const query = typeof payload.query === 'string' ? payload.query : '';
