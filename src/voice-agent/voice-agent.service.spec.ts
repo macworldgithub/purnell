@@ -69,10 +69,10 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
     it('should have exact OpenAI VAD & brain parameters', () => {
       const config = service.getConfig();
       expect(config.openai.model).toBe('gpt-4o-mini');
-      expect(config.openai.vad.threshold).toBe(0.75);
+      expect(config.openai.vad.threshold).toBe(0.85);
       expect(config.openai.vad.prefix_padding_ms).toBe(300);
       expect(config.openai.vad.silence_duration_ms).toBe(1200);
-      expect(config.openai.vad.barge_in_grace_ms).toBe(800);
+      expect(config.openai.vad.barge_in_grace_ms).toBe(1000);
     });
 
     it('should have exact Deepgram STT settings', () => {
