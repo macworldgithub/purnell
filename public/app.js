@@ -265,9 +265,7 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // Reset recognition buffer for the next turn cleanly
-      try { this.recognition.abort(); } catch (e) {}
-
+      // Do NOT abort/restart recognition to prevent the browser's built-in start/stop chime sound
       if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
         this.handleUserSpeech(textToSend);
       }
@@ -485,7 +483,11 @@ class SimpleVoiceAgent {
 
     const source = this.audioContext.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(this.audioContext.destination);
+
+    // Smooth micro-fade gain to prevent speaker clicks/pops
+    const gainNode = this.audioContext.createGain();
+    source.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
 
     const currentTime = this.audioContext.currentTime;
     // Add a small 15ms buffer when starting/falling behind to prevent buffer underrun pops
@@ -493,13 +495,17 @@ class SimpleVoiceAgent {
       this.nextAudioStartTime = currentTime + 0.015;
     }
 
+    // Quick 6ms smooth linear fade-in to eliminate DC offset pop
+    gainNode.gain.setValueAtTime(0.001, this.nextAudioStartTime);
+    gainNode.gain.linearRampToValueAtTime(1.0, this.nextAudioStartTime + 0.006);
+
     source.start(this.nextAudioStartTime);
     this.nextAudioStartTime += audioBuffer.duration;
-    this.activeAudioSources.push(source);
+    this.activeAudioSources.push({ source, gainNode });
     this.isAgentSpeaking = true;
 
     source.onended = () => {
-      const idx = this.activeAudioSources.indexOf(source);
+      const idx = this.activeAudioSources.findIndex((item) => item.source === source);
       if (idx !== -1) {
         this.activeAudioSources.splice(idx, 1);
       }
@@ -518,10 +524,17 @@ class SimpleVoiceAgent {
   stopAudio() {
     this.isAgentSpeaking = false;
     this.pcmLeftoverBytes = null;
-    for (const src of this.activeAudioSources) {
+    const now = this.audioContext ? this.audioContext.currentTime : 0;
+    for (const item of this.activeAudioSources) {
       try {
-        src.stop();
-        src.disconnect();
+        if (item.gainNode && this.audioContext) {
+          item.gainNode.gain.setValueAtTime(item.gainNode.gain.value, now);
+          item.gainNode.gain.linearRampToValueAtTime(0.001, now + 0.005);
+        }
+        item.source.stop(now + 0.006);
+        setTimeout(() => {
+          try { item.source.disconnect(); } catch (e) {}
+        }, 10);
       } catch (e) {}
     }
     this.activeAudioSources = [];
