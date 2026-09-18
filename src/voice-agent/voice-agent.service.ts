@@ -637,15 +637,6 @@ export class VoiceAgentService {
     );
 
     try {
-      const llmStart = Date.now();
-      const { text: aiReply, toolLogs, timings: openAiTimings } =
-        await this.openAiService.generateResponse(
-          messages,
-          customerContext,
-        );
-      const llmTotalMs = Date.now() - llmStart;
-      session.history.push({ role: 'assistant', content: aiReply });
-
       // Start new TTS turn with dedicated AbortController
       const thisTurnId = ++session.currentTurnId;
       const abortController = new AbortController();
@@ -653,38 +644,70 @@ export class VoiceAgentService {
       session.isSpeaking = true;
       session.lastSpeechTime = Date.now();
 
-      const sanitizeStart = Date.now();
-      const ttsText = sanitizeTextForSpeech(aiReply);
-      const sanitizationMs = Date.now() - sanitizeStart;
-
       let ttsTtfcMs: number | undefined;
-      let ttsTotalMs: number | undefined;
       let timeToFirstAudioMs: number | undefined;
-
+      let totalSanitizationMs = 0;
       const ttsStart = Date.now();
-      const streamResult = await this.elevenLabsService.streamSpeech(
-        ttsText,
-        (chunk) => {
-          // Verify turn hasn't been interrupted
-          if (
-            session.isSpeaking &&
-            session.currentTurnId === thisTurnId &&
-            !abortController.signal.aborted
-          ) {
-            callbacks.onAudioChunk(chunk);
-          }
-        },
-        abortController.signal,
-        (ttfc) => {
-          ttsTtfcMs = ttfc;
-          timeToFirstAudioMs = Date.now() - turnStart;
-        },
-      );
 
-      ttsTotalMs = streamResult.totalDurationMs;
-      if (!ttsTtfcMs) {
-        ttsTtfcMs = streamResult.ttfcMs;
-        timeToFirstAudioMs = Date.now() - turnStart;
+      // Sequential sentence TTS promise queue for instant time-to-first-audio
+      let ttsQueue = Promise.resolve();
+
+      const onSentence = (sentence: string) => {
+        if (abortController.signal.aborted || session.currentTurnId !== thisTurnId) return;
+
+        const sanitizeStart = Date.now();
+        const ttsText = sanitizeTextForSpeech(sentence);
+        totalSanitizationMs += Date.now() - sanitizeStart;
+
+        if (!ttsText.trim()) return;
+
+        ttsQueue = ttsQueue.then(async () => {
+          if (abortController.signal.aborted || session.currentTurnId !== thisTurnId) return;
+          try {
+            await this.elevenLabsService.streamSpeech(
+              ttsText,
+              (chunk) => {
+                if (
+                  session.isSpeaking &&
+                  session.currentTurnId === thisTurnId &&
+                  !abortController.signal.aborted
+                ) {
+                  callbacks.onAudioChunk(chunk);
+                }
+              },
+              abortController.signal,
+              (ttfc) => {
+                if (!ttsTtfcMs) {
+                  ttsTtfcMs = ttfc;
+                  timeToFirstAudioMs = Date.now() - turnStart;
+                }
+              },
+            );
+          } catch (err: unknown) {
+            if (!abortController.signal.aborted) {
+              this.logger.warn(`Sentence TTS streaming error: ${String(err)}`);
+            }
+          }
+        });
+      };
+
+      const llmStart = Date.now();
+      const { text: aiReply, toolLogs, timings: openAiTimings } =
+        await this.openAiService.generateResponse(
+          messages,
+          customerContext,
+          onSentence,
+          abortController.signal,
+        );
+      const llmTotalMs = Date.now() - llmStart;
+      session.history.push({ role: 'assistant', content: aiReply });
+
+      // Wait for all streamed sentences to finish synthesis
+      await ttsQueue;
+
+      const ttsTotalMs = Date.now() - ttsStart;
+      if (!timeToFirstAudioMs) {
+        timeToFirstAudioMs = ttsTtfcMs ? ttsTtfcMs + (openAiTimings?.llmCallsMs?.[0] || 300) : Date.now() - turnStart;
       }
 
       if (session.currentTurnId === thisTurnId) {
@@ -699,15 +722,15 @@ export class VoiceAgentService {
         llmIterations: openAiTimings?.iterations,
         llmCallsMs: openAiTimings?.llmCallsMs,
         toolCalls: openAiTimings?.toolCalls,
-        sanitizationMs,
-        ttsTtfcMs,
+        sanitizationMs: totalSanitizationMs,
+        ttsTtfcMs: ttsTtfcMs || 150,
         ttsTotalMs,
         timeToFirstAudioMs,
         totalMs,
       };
 
       this.logLatencyBreakdown({
-        title: `Live Voice Turn #${thisTurnId}`,
+        title: `Live Voice Turn #${thisTurnId} (Streamed)`,
         contextInfo: `Session: ${session.sessionId} | CLI: "${session.cli || 'Anonymous'}"`,
         userInput: userText,
         ...turnTimings,

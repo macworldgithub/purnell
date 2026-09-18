@@ -29,6 +29,11 @@ export interface FullCustomerProfile {
 @Injectable()
 export class CustomerDatabaseService {
   private readonly logger = new Logger(CustomerDatabaseService.name);
+  private readonly profileCache = new Map<
+    string,
+    { profile: FullCustomerProfile | null; expiry: number }
+  >();
+  private readonly CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes TTL
 
   constructor(
     @InjectModel(Customer.name)
@@ -48,6 +53,13 @@ export class CustomerDatabaseService {
    */
   private escapeRegex(str: string): string {
     return str.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+  }
+
+  /**
+   * Clear cache if needed
+   */
+  public clearCache(): void {
+    this.profileCache.clear();
   }
 
   /**
@@ -195,10 +207,24 @@ export class CustomerDatabaseService {
   async getFullCustomerProfile(
     query: string,
   ): Promise<FullCustomerProfile | null> {
+    if (!query || typeof query !== 'string') return null;
+    const qTrimmed = query.trim();
+    if (!qTrimmed) return null;
+
+    const cacheKey = qTrimmed.toLowerCase();
+    const cached = this.profileCache.get(cacheKey);
+    if (cached && cached.expiry > Date.now()) {
+      this.logger.debug(
+        `[CustomerDB] Cache HIT for "${qTrimmed}" (0ms)`,
+      );
+      return cached.profile;
+    }
+
     const startTime = Date.now();
     try {
-      const customer = await this.findCustomer(query);
+      const customer = await this.findCustomer(qTrimmed);
       if (!customer) {
+        this.profileCache.set(cacheKey, { profile: null, expiry: Date.now() + 60000 });
         return null;
       }
 
@@ -216,18 +242,33 @@ export class CustomerDatabaseService {
         this.authorisedContactModel.findOne({ customer_id: customerId }).lean(),
       ]);
 
-      const totalDuration = Date.now() - startTime;
-      this.logger.log(
-        `[CustomerDB] getFullCustomerProfile("${query}") fully populated in ${totalDuration}ms (Customer: ${customer.customer_name}, ROs: ${repair_orders.length}, Bookings: ${service_bookings.length})`,
-      );
-
-      return {
+      const profile: FullCustomerProfile = {
         customer,
         repair_orders,
         parts_orders,
         service_bookings,
         authorised_contacts,
       };
+
+      const now = Date.now();
+      const expiry = now + this.CACHE_TTL_MS;
+      this.profileCache.set(cacheKey, { profile, expiry });
+      if (customer.mobile) {
+        this.profileCache.set(customer.mobile.toLowerCase(), { profile, expiry });
+      }
+      if (customer.customer_name) {
+        this.profileCache.set(customer.customer_name.toLowerCase(), { profile, expiry });
+      }
+      if (customer.customer_id) {
+        this.profileCache.set(customer.customer_id.toLowerCase(), { profile, expiry });
+      }
+
+      const totalDuration = now - startTime;
+      this.logger.log(
+        `[CustomerDB] getFullCustomerProfile("${query}") fully populated in ${totalDuration}ms (Customer: ${customer.customer_name}, ROs: ${repair_orders.length}, Bookings: ${service_bookings.length}) [Cached for 10m]`,
+      );
+
+      return profile;
     } catch (err: unknown) {
       const totalDuration = Date.now() - startTime;
       this.logger.error(`[CustomerDB] Error fetching full customer profile for "${query}" (${totalDuration}ms):`, err);

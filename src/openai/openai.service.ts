@@ -471,11 +471,44 @@ ${kbText.trim()}
   }
 
   /**
-   * Generates AI brain text response given conversation history and verified caller context
+   * Helper to extract complete sentences from streaming text buffer
+   */
+  private extractReadySentences(buffer: string): {
+    sentences: string[];
+    remaining: string;
+  } {
+    const sentences: string[] = [];
+    let remaining = buffer;
+
+    // Match sentences ending with punctuation followed by space or newline
+    const sentenceRegex = /^(.*?[.!?])(?:\s+|\n+)(.*)$/s;
+    while (true) {
+      const match = remaining.match(sentenceRegex);
+      if (!match) break;
+      const sentence = match[1].trim();
+      // Avoid splitting prematurely on common abbreviations
+      if (
+        sentence.length >= 10 &&
+        !/(?:Ltd|Mr|Mrs|Ms|Dr|RO|NSW|Pty|St|Ave|Rd)\.$/i.test(sentence)
+      ) {
+        sentences.push(sentence);
+        remaining = match[2];
+      } else {
+        break;
+      }
+    }
+
+    return { sentences, remaining };
+  }
+
+  /**
+   * Generates AI brain text response with real-time sentence streaming support
    */
   async generateResponse(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     customerContext?: string,
+    onSentenceChunk?: (sentence: string) => void,
+    abortSignal?: AbortSignal,
   ): Promise<{ text: string; toolLogs?: string[]; timings?: OpenAiResponseTimings }> {
     const overallStart = Date.now();
     let systemPromptContent = this.getSystemPrompt();
@@ -508,40 +541,106 @@ ${kbText.trim()}
       const llmCallStart = Date.now();
 
       try {
-        const response = await this.openai.chat.completions.create({
-          model: chatModel,
-          messages: currentMessages,
-          tools,
-          temperature: this.config.temperature,
-        });
+        if (onSentenceChunk) {
+          // Streaming mode for instant sentence-by-sentence TTS delivery
+          const stream = await this.openai.chat.completions.create(
+            {
+              model: chatModel,
+              messages: currentMessages,
+              tools,
+              temperature: this.config.temperature,
+              stream: true,
+            },
+            { signal: abortSignal },
+          );
 
-        const llmDuration = Date.now() - llmCallStart;
-        llmCallsMs.push(llmDuration);
+          let streamedContent = '';
+          let pendingBuffer = '';
+          const pendingToolCalls: Map<
+            number,
+            { id: string; name: string; arguments: string }
+          > = new Map();
 
-        const choice = response.choices[0];
-        const message = choice?.message;
-        if (!message) break;
+          for await (const chunk of stream) {
+            if (abortSignal?.aborted) break;
 
-        // If the model invoked tools, execute them and continue the reasoning loop
-        if (message.tool_calls && message.tool_calls.length > 0) {
-          currentMessages.push(message);
+            const delta = chunk.choices[0]?.delta;
+            if (!delta) continue;
 
-          for (const toolCall of message.tool_calls) {
-            if ('function' in toolCall && toolCall.function) {
-              const toolName = toolCall.function.name;
+            if (delta.content) {
+              streamedContent += delta.content;
+              pendingBuffer += delta.content;
+
+              const { sentences, remaining } =
+                this.extractReadySentences(pendingBuffer);
+              for (const sentence of sentences) {
+                if (sentence.length > 0) {
+                  onSentenceChunk(sentence);
+                }
+              }
+              pendingBuffer = remaining;
+            }
+
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index;
+                const existing = pendingToolCalls.get(idx) || {
+                  id: tc.id || '',
+                  name: tc.function?.name || '',
+                  arguments: '',
+                };
+                if (tc.id) existing.id = tc.id;
+                if (tc.function?.name) existing.name = tc.function.name;
+                if (tc.function?.arguments) {
+                  existing.arguments += tc.function.arguments;
+                }
+                pendingToolCalls.set(idx, existing);
+              }
+            }
+          }
+
+          const llmDuration = Date.now() - llmCallStart;
+          llmCallsMs.push(llmDuration);
+
+          // If tool calls were requested, execute them and continue iteration
+          if (pendingToolCalls.size > 0) {
+            const toolCallArray = Array.from(pendingToolCalls.values()).map(
+              (tc) => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.name,
+                  arguments: tc.arguments,
+                },
+              }),
+            );
+
+            currentMessages.push({
+              role: 'assistant',
+              content: streamedContent || null,
+              tool_calls: toolCallArray,
+            });
+
+            for (const tc of toolCallArray) {
               let toolArgs: Record<string, unknown> = {};
               try {
                 toolArgs = JSON.parse(
-                  toolCall.function.arguments || '{}',
+                  tc.function.arguments || '{}',
                 ) as Record<string, unknown>;
               } catch {
                 toolArgs = {};
               }
 
               const toolStart = Date.now();
-              const toolResult = await this.executeToolCall(toolName, toolArgs);
+              const toolResult = await this.executeToolCall(
+                tc.function.name,
+                toolArgs,
+              );
               const toolDuration = Date.now() - toolStart;
-              toolCalls.push({ name: toolName, durationMs: toolDuration });
+              toolCalls.push({
+                name: tc.function.name,
+                durationMs: toolDuration,
+              });
 
               try {
                 const parsed = JSON.parse(toolResult) as ParsedToolResult;
@@ -554,40 +653,133 @@ ${kbText.trim()}
 
               currentMessages.push({
                 role: 'tool',
-                tool_call_id: toolCall.id,
+                tool_call_id: tc.id,
                 content: toolResult,
               });
             }
+            continue;
           }
-          // Continue loop so model can process the tool results or execute next step
-          continue;
-        }
 
-        // Return final text response from the model
-        if (message.content && message.content.trim().length > 0) {
-          const totalMs = Date.now() - overallStart;
-          const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
-          const totalToolsTime = toolCalls.reduce((a, b) => a + b.durationMs, 0);
-          this.logger.log(
-            `[OpenAiService] Response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
-          );
-          return {
-            text: message.content.trim(),
-            toolLogs,
-            timings: {
-              totalMs,
-              iterations: iteration,
-              llmCallsMs,
-              toolCalls,
+          // Flush any final remaining text
+          if (pendingBuffer.trim().length > 0 && !abortSignal?.aborted) {
+            onSentenceChunk(pendingBuffer.trim());
+          }
+
+          if (streamedContent && streamedContent.trim().length > 0) {
+            const totalMs = Date.now() - overallStart;
+            const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
+            const totalToolsTime = toolCalls.reduce(
+              (a, b) => a + b.durationMs,
+              0,
+            );
+            this.logger.log(
+              `[OpenAiService] Streamed response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
+            );
+            return {
+              text: streamedContent.trim(),
+              toolLogs,
+              timings: {
+                totalMs,
+                iterations: iteration,
+                llmCallsMs,
+                toolCalls,
+              },
+            };
+          }
+        } else {
+          // Standard non-streaming mode
+          const response = await this.openai.chat.completions.create(
+            {
+              model: chatModel,
+              messages: currentMessages,
+              tools,
+              temperature: this.config.temperature,
             },
-          };
+            { signal: abortSignal },
+          );
+
+          const llmDuration = Date.now() - llmCallStart;
+          llmCallsMs.push(llmDuration);
+
+          const choice = response.choices[0];
+          const message = choice?.message;
+          if (!message) break;
+
+          // If the model invoked tools, execute them and continue the reasoning loop
+          if (message.tool_calls && message.tool_calls.length > 0) {
+            currentMessages.push(message);
+
+            for (const toolCall of message.tool_calls) {
+              if ('function' in toolCall && toolCall.function) {
+                const toolName = toolCall.function.name;
+                let toolArgs: Record<string, unknown> = {};
+                try {
+                  toolArgs = JSON.parse(
+                    toolCall.function.arguments || '{}',
+                  ) as Record<string, unknown>;
+                } catch {
+                  toolArgs = {};
+                }
+
+                const toolStart = Date.now();
+                const toolResult = await this.executeToolCall(
+                  toolName,
+                  toolArgs,
+                );
+                const toolDuration = Date.now() - toolStart;
+                toolCalls.push({ name: toolName, durationMs: toolDuration });
+
+                try {
+                  const parsed = JSON.parse(toolResult) as ParsedToolResult;
+                  if (typeof parsed.simulatedLog === 'string') {
+                    toolLogs.push(parsed.simulatedLog);
+                  }
+                } catch {
+                  // ignore
+                }
+
+                currentMessages.push({
+                  role: 'tool',
+                  tool_call_id: toolCall.id,
+                  content: toolResult,
+                });
+              }
+            }
+            continue;
+          }
+
+          // Return final text response from the model
+          if (message.content && message.content.trim().length > 0) {
+            const totalMs = Date.now() - overallStart;
+            const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
+            const totalToolsTime = toolCalls.reduce(
+              (a, b) => a + b.durationMs,
+              0,
+            );
+            this.logger.log(
+              `[OpenAiService] Response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
+            );
+            return {
+              text: message.content.trim(),
+              toolLogs,
+              timings: {
+                totalMs,
+                iterations: iteration,
+                llmCallsMs,
+                toolCalls,
+              },
+            };
+          }
         }
 
         break;
       } catch (err: unknown) {
         const llmDuration = Date.now() - llmCallStart;
         llmCallsMs.push(llmDuration);
-        this.logger.error(`OpenAI completion error on iteration ${iteration} after ${llmDuration}ms:`, err);
+        this.logger.error(
+          `OpenAI completion error on iteration ${iteration} after ${llmDuration}ms:`,
+          err,
+        );
         break;
       }
     }
@@ -595,7 +787,7 @@ ${kbText.trim()}
     const totalMs = Date.now() - overallStart;
     // Safe fallback if loop terminated without content
     return {
-      text: "Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?",
+      text: 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?',
       toolLogs,
       timings: {
         totalMs,

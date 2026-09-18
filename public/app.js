@@ -254,16 +254,19 @@ class SimpleVoiceAgent {
     this.recognition.interimResults = true;
     this.recognition.lang = 'en-AU';
 
+    let finalTranscript = '';
+
     const finalizeAndSend = () => {
-      const textToSend = (this.accumulatedTranscript || '').trim();
+      const textToSend = (this.accumulatedTranscript || finalTranscript || '').trim();
       this.accumulatedTranscript = '';
+      finalTranscript = '';
       if (this.speechSilenceTimer) {
         clearTimeout(this.speechSilenceTimer);
         this.speechSilenceTimer = null;
       }
 
       // Reset recognition buffer for the next turn cleanly
-      try { this.recognition.stop(); } catch (e) {}
+      try { this.recognition.abort(); } catch (e) {}
 
       if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
         this.handleUserSpeech(textToSend);
@@ -271,16 +274,20 @@ class SimpleVoiceAgent {
     };
 
     this.recognition.onresult = (event) => {
-      // Reconstruct clean transcript from current speech recognition results
-      let turnTranscript = '';
-      for (let i = 0; i < event.results.length; ++i) {
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
         const item = event.results[i];
-        if (item && item[0] && item[0].transcript) {
-          turnTranscript += item[0].transcript + ' ';
+        if (item && item[0]) {
+          const text = item[0].transcript || '';
+          if (item.isFinal) {
+            finalTranscript += text + ' ';
+          } else {
+            interimTranscript += text;
+          }
         }
       }
 
-      const cleanTurn = turnTranscript.trim();
+      const cleanTurn = (finalTranscript + ' ' + interimTranscript).trim().replace(/\s+/g, ' ');
       if (!cleanTurn) return;
 
       // INSTANT BARGE-IN: If agent is speaking and user speaks, cut off agent audio immediately
@@ -302,11 +309,11 @@ class SimpleVoiceAgent {
         this.speechSilenceTimer = null;
       }
 
-      // Allow 1100ms pause after speaking before finalizing and dispatching turn
+      // Allow 650ms pause after speaking before finalizing and dispatching turn (reduced from 1100ms)
       if (this.accumulatedTranscript.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
         this.speechSilenceTimer = setTimeout(() => {
           finalizeAndSend();
-        }, 1100);
+        }, 650);
       }
     };
 
