@@ -483,29 +483,21 @@ class SimpleVoiceAgent {
 
     const source = this.audioContext.createBufferSource();
     source.buffer = audioBuffer;
-
-    // Smooth micro-fade gain to prevent speaker clicks/pops
-    const gainNode = this.audioContext.createGain();
-    source.connect(gainNode);
-    gainNode.connect(this.audioContext.destination);
+    source.connect(this.audioContext.destination);
 
     const currentTime = this.audioContext.currentTime;
-    // Add a small 15ms buffer when starting/falling behind to prevent buffer underrun pops
+    // Buffer ahead by 20ms if falling behind to ensure gapless streaming playback
     if (this.nextAudioStartTime < currentTime) {
-      this.nextAudioStartTime = currentTime + 0.015;
+      this.nextAudioStartTime = currentTime + 0.02;
     }
-
-    // Quick 6ms smooth linear fade-in to eliminate DC offset pop
-    gainNode.gain.setValueAtTime(0.001, this.nextAudioStartTime);
-    gainNode.gain.linearRampToValueAtTime(1.0, this.nextAudioStartTime + 0.006);
 
     source.start(this.nextAudioStartTime);
     this.nextAudioStartTime += audioBuffer.duration;
-    this.activeAudioSources.push({ source, gainNode });
+    this.activeAudioSources.push(source);
     this.isAgentSpeaking = true;
 
     source.onended = () => {
-      const idx = this.activeAudioSources.findIndex((item) => item.source === source);
+      const idx = this.activeAudioSources.indexOf(source);
       if (idx !== -1) {
         this.activeAudioSources.splice(idx, 1);
       }
@@ -524,17 +516,10 @@ class SimpleVoiceAgent {
   stopAudio() {
     this.isAgentSpeaking = false;
     this.pcmLeftoverBytes = null;
-    const now = this.audioContext ? this.audioContext.currentTime : 0;
-    for (const item of this.activeAudioSources) {
+    for (const src of this.activeAudioSources) {
       try {
-        if (item.gainNode && this.audioContext) {
-          item.gainNode.gain.setValueAtTime(item.gainNode.gain.value, now);
-          item.gainNode.gain.linearRampToValueAtTime(0.001, now + 0.005);
-        }
-        item.source.stop(now + 0.006);
-        setTimeout(() => {
-          try { item.source.disconnect(); } catch (e) {}
-        }, 10);
+        src.stop();
+        src.disconnect();
       } catch (e) {}
     }
     this.activeAudioSources = [];
