@@ -97,11 +97,144 @@ Purnell Motors Pty Ltd — family-owned prestige dealership, Blakehurst, souther
 | **Sherwyn Munsamy** | Workshop Manager | sherwynm@purnellmotors.com.au |
 | **George Godfrey** | Workshop Controller | georgeg@purnellmotors.com.au |
 
-## 6. Workshop & Parts Status Definitions
+---
 
-- **Repair Order Statuses:** `booked_not_arrived` | `checked_in` | `awaiting_approval` | `awaiting_parts` | `quality_check` | `ready_for_collection` | `loan_vehicle_out` | `completed` | `no_open_activity`
-- **Parts Statuses:** `ordered` | `in_transit` | `arrived` | `ready_for_fitment` | `fitted` | `back_ordered`
-- **System Availability:** If live DMS or CRM data is unavailable, use the "System unavailable" vocabulary. Never invent data. Offer a warm transfer to Service.
+## 6. Mock Data Schema (Pentana Replacement — Bind to Real DB at Go-Live)
+
+These are the objects your backend must populate and inject into the context window. Until Pentana access is live, seed from the mock DB using the same field names so no prompt changes are required at cutover.
+
+### 6.1 Customer Record
+```json
+{
+  "customer_id": "CUS-00123",
+  "customer_name": "James Chen",
+  "preferred_name": "James",
+  "customer_since": "2018-03-14",
+  "mobile": "+61412345678",
+  "landline": null,
+  "email": "james.chen@example.com",
+  "consent_sms": true,
+  "consent_marketing": false,
+  "vip": false,
+  "complaint_open": false,
+  "awaiting_callback": false,
+  "vehicles": [
+    {
+      "rego": "ABC123",
+      "vin": "SALGA2EF3PA123456",
+      "year": 2022,
+      "make": "Land Rover",
+      "model": "Defender 110",
+      "colour": "Carpathian Grey",
+      "assigned_advisor": "Kamal Ghassah",
+      "assigned_sales": "Anja Ruzic"
+    }
+  ]
+}
+```
+
+### 6.2 Repair Order (RO)
+```json
+{
+  "ro_number": "RO-45821",
+  "customer_id": "CUS-00123",
+  "vehicle_rego": "ABC123",
+  "status": "awaiting_parts",
+  "drop_off_date": "2026-09-10",
+  "eta": null,
+  "advisor": "Kamal Ghassah",
+  "awaiting_approval": false,
+  "awaiting_parts": true,
+  "ready_for_collection": false,
+  "loan_vehicle": {
+    "active": true,
+    "rego": "LV-LOAN-07",
+    "make": "Land Rover",
+    "model": "Discovery Sport"
+  },
+  "job_lines": [
+    {
+      "description": "Front sensor replacement",
+      "status": "parts_ordered",
+      "parts_eta": "2026-09-16"
+    }
+  ],
+  "workshop_notes": "Sensor backordered — ETA confirmed with Nunzio 15 Sep."
+}
+```
+
+**Valid status values:** `booked_not_arrived` | `checked_in` | `awaiting_approval` | `awaiting_parts` | `quality_check` | `ready_for_collection` | `loan_vehicle_out` | `completed` | `no_open_activity`
+
+### 6.3 Service Booking
+```json
+{
+  "booking_id": "BK-9901",
+  "customer_id": "CUS-00123",
+  "vehicle_rego": "ABC123",
+  "date": "2026-09-22",
+  "time": "08:00",
+  "advisor": "Robert Suto",
+  "job_type": "Annual service",
+  "loan_car_requested": true,
+  "loan_car_confirmed": false,
+  "collection_suburb": null,
+  "collect_and_return": false,
+  "status": "confirmed"
+}
+```
+
+### 6.4 Parts Order
+```json
+{
+  "parts_order_id": "PO-7711",
+  "ro_number": "RO-45821",
+  "customer_id": "CUS-00123",
+  "vehicle_rego": "ABC123",
+  "lines": [
+    {
+      "part_number": "LR123456",
+      "description": "Front parking sensor",
+      "status": "ordered",
+      "arrived": false,
+      "arrival_date": null,
+      "fitment_booked": false
+    }
+  ],
+  "notify_on": "first_arrival",
+  "sms_sent": false,
+  "suppress_until": null
+}
+```
+
+**Parts status values:** `ordered` | `in_transit` | `arrived` | `ready_for_fitment` | `fitted` | `back_ordered`
+
+### 6.5 SMS Notification Record
+```json
+{
+  "notification_id": "SMS-3301",
+  "customer_id": "CUS-00123",
+  "parts_order_id": "PO-7711",
+  "sent_at": null,
+  "status": "pending",
+  "message_template": "parts_arrived_v1",
+  "booking_created": false,
+  "booking_id": null,
+  "opted_out": false
+}
+```
+
+### 6.6 System Availability Flag
+```json
+{
+  "dms_available": true,
+  "crm_available": true,
+  "booking_api_available": true,
+  "parts_api_available": true,
+  "last_sync": "2026-09-15T08:45:00+10:00"
+}
+```
+
+*If `dms_available: false` → use the "System unavailable" vocabulary. Never invent data. Offer warm transfer to Service.*
 
 ---
 
@@ -283,3 +416,40 @@ The system is not best-in-class unless all of the following are true in producti
 - JLR, INEOS and Omoda Jaecoo are never mixed in the same booking diary.
 - After-hours breakdown callers receive RSA numbers within the first 20 seconds.
 - Mystery-shop transcripts read like Blakehurst reception, not a generic OEM bot.
+
+---
+
+## 14. SMS Notification Templates (Module 4.2)
+
+### `parts_arrived_v1`
+```text
+Hi [FirstName], great news — the parts for your [Year] [Make] [Model] ([Rego]) have arrived at Purnell Motors Blakehurst.
+Reply BOOK to schedule fitment, or call us on (02) 8558 7000.
+Reply STOP to opt out.
+Purnell Motors, 990 King Georges Rd, Blakehurst.
+```
+
+### `booking_confirmed_v1`
+```text
+Hi [FirstName], your fitment booking is confirmed for [Date] at [Time] at Purnell Motors Blakehurst (990 King Georges Rd).
+Questions? Call (02) 8558 7000. Reply STOP to opt out.
+```
+
+### `callback_taken_v1`
+```text
+Hi [FirstName], [DepartmentName] at Purnell Motors will call you back on this number by [CallbackTime].
+Reference: [IntentLabel]. Call (02) 8558 7000 if urgent.
+```
+
+---
+
+## 15. Source Notes and Refresh Cadence
+
+| Data Type | Refresh Frequency |
+| --- | --- |
+| **Staff roster and hours** | Monthly |
+| **Vehicle offers / pricing** | Weekly |
+| **This playbook** | After any franchise change, DMS cutover, or mystery-shop failure |
+| **Hours, stock, RO status, staff availability** | Live systems — never this document |
+
+*Engineering must bind hours, stock, RO status and staff rosters to live systems. This document is the knowledge layer only — not the source of truth for runtime data.*

@@ -70,9 +70,56 @@ Run these four passes at session start before your first utterance. Do not narra
 
 ---
 
-## 5. Injected Context & Status Vocabulary
+## 5. Context Object (Injected by Backend Each Turn)
 
-Each turn, the backend injects the caller's verified CRM profile (Customer Name, Registered Vehicles, Open Repair Orders, Upcoming Bookings, Parts Orders, and Assigned Advisor). Read this data silently to ground your answers.
+```typescript
+interface ContextObject {
+  identified: boolean;
+  confidence: "high" | "medium" | "low";
+  customer_name: string;
+  preferred_name: string;
+  customer_since: string;
+  vehicles: Array<{
+    rego: string;
+    vin: string;
+    year: number;
+    make: string;
+    model: string;
+    colour: string;
+  }>;
+  assigned_sales: string;
+  assigned_advisor: string;
+  open_ros: Array<{
+    ro_number: string;
+    status: string;
+    vehicle: string;
+    drop_off_date: string;
+    eta: string | null;
+    advisor: string;
+    awaiting_approval: boolean;
+    awaiting_parts: boolean;
+    ready_for_collection: boolean;
+    loan_vehicle: any;
+  }>;
+  upcoming_bookings: Array<{
+    date: string;
+    time: string;
+    advisor: string;
+    job_type: string;
+  }>;
+  last_service: {
+    date: string;
+    mileage: number;
+    advisor: string;
+  };
+  flags: {
+    vip: boolean;
+    warranty_open: boolean;
+    complaint_open: boolean;
+    awaiting_callback: boolean;
+  };
+}
+```
 
 ### Status Vocabulary
 *Use these exact phrases — do not paraphrase into uncertainty:*
