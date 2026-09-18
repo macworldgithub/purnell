@@ -22,16 +22,16 @@ class SimpleVoiceAgent {
     this.isProcessingSpeech = false;
     this.ws = null;
     this.wsConnected = false;
-    this.recognition = null;
     this.history = [];
     this.audioContext = null;
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
     this.pcmLeftoverBytes = null;
 
-    // Speech accumulation & debouncing state
-    this.accumulatedTranscript = '';
-    this.speechSilenceTimer = null;
+    // Microphone capture state (zero-chime silent capture)
+    this.micStream = null;
+    this.micSource = null;
+    this.micProcessor = null;
 
     // DOM Elements
     this.playBtn = document.getElementById('playBtn');
@@ -50,7 +50,6 @@ class SimpleVoiceAgent {
 
   init() {
     this.setupEvents();
-    this.initSpeechRecognition();
     this.initAudioContext();
     this.updateCliBadge();
   }
@@ -108,7 +107,6 @@ class SimpleVoiceAgent {
   async startCall() {
     this.isCallActive = true;
     this.isProcessingSpeech = false;
-    this.accumulatedTranscript = '';
     await this.resumeAudioContext();
 
     // Update UI button state
@@ -129,17 +127,8 @@ class SimpleVoiceAgent {
   endCall() {
     this.isCallActive = false;
     this.isProcessingSpeech = false;
-    this.accumulatedTranscript = '';
     this.stopAudio();
-
-    if (this.speechSilenceTimer) {
-      clearTimeout(this.speechSilenceTimer);
-      this.speechSilenceTimer = null;
-    }
-
-    if (this.recognition) {
-      try { this.recognition.stop(); } catch (e) {}
-    }
+    this.stopMicrophone();
 
     if (this.ws) {
       try { this.ws.close(); } catch (e) {}
@@ -155,7 +144,7 @@ class SimpleVoiceAgent {
     this.statusText.textContent = 'Call ended';
   }
 
-  // --- Voice Pipeline Connection (WebSocket with Clean Fallback) ---
+  // --- Voice Pipeline Connection (WebSocket with Direct Audio Streaming) ---
   connectPipeline() {
     const rawCli = this.cliInput ? this.cliInput.value : '';
     const normalizedCli = normalizeAustralianPhone(rawCli);
@@ -165,34 +154,43 @@ class SimpleVoiceAgent {
 
     try {
       this.ws = new WebSocket(wsUrl);
+      this.ws.binaryType = 'arraybuffer';
 
-      this.ws.onopen = () => {
+      this.ws.onopen = async () => {
         this.wsConnected = true;
         if (this.isCallActive) {
           this.statusText.textContent = 'Live Call Active';
-          this.startSpeechRecognition();
+          await this.startMicrophone();
         }
       };
 
       this.ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data);
-          if (msg.event === 'session_ready') {
-            this.statusText.textContent = 'Live Call Active';
-          } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
-            this.statusText.textContent = 'Live Call Active';
-            if (msg.data.timings) {
-              console.log('[VoiceAgent Client] Turn Timings:', msg.data.timings);
+          if (typeof event.data === 'string') {
+            const msg = JSON.parse(event.data);
+            if (msg.event === 'session_ready') {
+              this.statusText.textContent = 'Live Call Active';
+            } else if (msg.event === 'transcript' && msg.data) {
+              if (msg.data.transcript && msg.data.transcript.trim()) {
+                if (this.isCallActive) {
+                  this.statusText.textContent = msg.data.isFinal ? 'Thinking...' : 'Listening...';
+                }
+              }
+            } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
+              this.statusText.textContent = 'Live Call Active';
+              if (msg.data.timings) {
+                console.log('[VoiceAgent Client] Turn Timings:', msg.data.timings);
+              }
+              this.history.push({ role: 'assistant', content: msg.data.text });
+              this.addTranscript('agent', msg.data.text);
+              if (msg.data.audioBuffer) {
+                this.playCompleteAudio(msg.data.audioBuffer);
+              }
+            } else if (msg.event === 'audio_chunk' && msg.data && msg.data.chunk) {
+              this.playPcmChunk(msg.data.chunk);
+            } else if (msg.event === 'stop_audio' || msg.event === 'clear_audio_buffer') {
+              this.stopAudio();
             }
-            this.history.push({ role: 'assistant', content: msg.data.text });
-            this.addTranscript('agent', msg.data.text);
-            if (msg.data.audioBuffer) {
-              this.playCompleteAudio(msg.data.audioBuffer);
-            }
-          } else if (msg.event === 'audio_chunk' && msg.data && msg.data.chunk) {
-            this.playPcmChunk(msg.data.chunk);
-          } else if (msg.event === 'stop_audio' || msg.event === 'clear_audio_buffer') {
-            this.stopAudio();
           }
         } catch (e) {
           console.error('WebSocket message parsing error:', e);
@@ -218,7 +216,7 @@ class SimpleVoiceAgent {
   async initRestGreeting(cli) {
     if (!this.isCallActive) return;
     this.statusText.textContent = 'Live Call Active';
-    this.startSpeechRecognition();
+    await this.startMicrophone();
 
     try {
       const response = await fetch('/voice-agent/start', {
@@ -241,173 +239,113 @@ class SimpleVoiceAgent {
     }
   }
 
-  // --- Speech Recognition with Real-time Barge-In & Continuous Listening ---
-  initSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.warn('SpeechRecognition not supported in this browser.');
-      return;
-    }
+  // --- Silent High-Performance Microphone Audio Stream (Zero Browser Chimes) ---
+  async startMicrophone() {
+    try {
+      this.stopMicrophone();
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous = true;
-    this.recognition.interimResults = true;
-    this.recognition.lang = 'en-AU';
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-    let finalTranscript = '';
-
-    const finalizeAndSend = () => {
-      const textToSend = (this.accumulatedTranscript || finalTranscript || '').trim();
-      this.accumulatedTranscript = '';
-      finalTranscript = '';
-      if (this.speechSilenceTimer) {
-        clearTimeout(this.speechSilenceTimer);
-        this.speechSilenceTimer = null;
+      const audioCtx = this.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = audioCtx;
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
       }
 
-      // Do NOT abort/restart recognition to prevent the browser's built-in start/stop chime sound
-      if (textToSend.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
-        this.handleUserSpeech(textToSend);
-      }
-    };
+      this.micSource = audioCtx.createMediaStreamSource(this.micStream);
+      const bufferSize = 4096;
+      this.micProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
-    this.recognition.onresult = (event) => {
-      let interimTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const item = event.results[i];
-        if (item && item[0]) {
-          const text = item[0].transcript || '';
-          if (item.isFinal) {
-            finalTranscript += text + ' ';
-          } else {
-            interimTranscript += text;
+      this.micProcessor.onaudioprocess = (e) => {
+        if (!this.isCallActive) return;
+
+        const inputData = e.inputBuffer.getChannelData(0);
+        const inputSampleRate = e.inputBuffer.sampleRate;
+
+        // Instant Barge-In detection via RMS energy threshold
+        if (this.isAgentSpeaking) {
+          const rms = this.calculateRms(inputData);
+          if (rms > 0.035) {
+            console.log('[Barge-In] User speech detected, muting agent audio immediately');
+            this.stopAudio();
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+              try {
+                this.ws.send(JSON.stringify({ event: 'stop_agent_speaking', data: {} }));
+              } catch (err) {}
+            }
           }
         }
-      }
 
-      const cleanTurn = (finalTranscript + ' ' + interimTranscript).trim().replace(/\s+/g, ' ');
-      if (!cleanTurn) return;
-
-      // INSTANT BARGE-IN: If agent is speaking and user speaks, cut off agent audio immediately
-      if (this.isAgentSpeaking) {
-        console.log('[Barge-In] User interrupted agent with speech:', cleanTurn);
-        this.stopAudio();
-        if (this.ws && this.wsConnected) {
-          try {
-            this.ws.send(JSON.stringify({ event: 'stop_agent_speaking', data: {} }));
-          } catch (e) {}
+        // Resample and convert to 16kHz 16-bit PCM for Deepgram
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          const pcm16 = this.downsampleTo16k(inputData, inputSampleRate);
+          if (pcm16 && pcm16.buffer && pcm16.byteLength > 0) {
+            this.ws.send(pcm16.buffer);
+          }
         }
-      }
+      };
 
-      this.accumulatedTranscript = cleanTurn;
-
-      // Reset debouncing silence timer
-      if (this.speechSilenceTimer) {
-        clearTimeout(this.speechSilenceTimer);
-        this.speechSilenceTimer = null;
-      }
-
-      // Allow 650ms pause after speaking before finalizing and dispatching turn (reduced from 1100ms)
-      if (this.accumulatedTranscript.length > 0 && this.isCallActive && !this.isProcessingSpeech) {
-        this.speechSilenceTimer = setTimeout(() => {
-          finalizeAndSend();
-        }, 650);
-      }
-    };
-
-    this.recognition.onerror = (event) => {
-      if (event.error !== 'no-speech') {
-        console.warn('SpeechRecognition error:', event.error);
-      }
-      if (event.error === 'not-allowed') {
+      this.micSource.connect(this.micProcessor);
+      this.micProcessor.connect(audioCtx.destination);
+    } catch (err) {
+      console.warn('Microphone access failed:', err);
+      if (this.statusText) {
         this.statusText.textContent = 'Microphone blocked';
       }
-    };
-
-    this.recognition.onend = () => {
-      // Keep listening continuously as long as call is active
-      if (this.isCallActive) {
-        try {
-          this.recognition.start();
-        } catch (e) {
-          setTimeout(() => {
-            if (this.isCallActive) {
-              try { this.recognition.start(); } catch (err) {}
-            }
-          }, 200);
-        }
-      }
-    };
-  }
-
-  startSpeechRecognition() {
-    if (this.recognition) {
-      try { this.recognition.start(); } catch (e) {}
     }
   }
 
-  async handleUserSpeech(text) {
-    if (this.isProcessingSpeech || !text || !text.trim()) return;
-    this.isProcessingSpeech = true;
-    this.stopAudio();
+  stopMicrophone() {
+    if (this.micProcessor) {
+      try { this.micProcessor.disconnect(); } catch (e) {}
+      this.micProcessor = null;
+    }
+    if (this.micSource) {
+      try { this.micSource.disconnect(); } catch (e) {}
+      this.micSource = null;
+    }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((track) => track.stop());
+      } catch (e) {}
+      this.micStream = null;
+    }
+  }
 
-    const cleanText = text.trim();
-    this.addTranscript('user', cleanText);
-    this.history.push({ role: 'user', content: cleanText });
-
-    const rawCli = this.cliInput ? this.cliInput.value : '';
-    const normalizedCli = normalizeAustralianPhone(rawCli);
-
-    if (this.isCallActive) {
-      this.statusText.textContent = 'Thinking...';
+  downsampleTo16k(inputData, sampleRate) {
+    if (sampleRate === 16000) {
+      const pcm16 = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return pcm16;
     }
 
-    try {
-      if (this.ws && this.wsConnected) {
-        this.ws.send(
-          JSON.stringify({
-            event: 'text_input',
-            data: {
-              text: cleanText,
-              history: this.history,
-              cli: normalizedCli,
-            },
-          }),
-        );
-      } else {
-        const response = await fetch('/voice-agent/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: cleanText,
-            history: this.history,
-            cli: normalizedCli,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (this.isCallActive) {
-          this.statusText.textContent = 'Live Call Active';
-
-          if (data && data.success && data.response) {
-            this.history.push({ role: 'assistant', content: data.response });
-            this.addTranscript('agent', data.response);
-
-            if (data.audioBuffer) {
-              this.playCompleteAudio(data.audioBuffer);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('API Error:', err);
-      if (this.isCallActive) {
-        this.statusText.textContent = 'Live Call Active';
-      }
-    } finally {
-      this.isProcessingSpeech = false;
+    const ratio = sampleRate / 16000;
+    const newLength = Math.round(inputData.length / ratio);
+    const pcm16 = new Int16Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      const idx = Math.round(i * ratio);
+      const s = Math.max(-1, Math.min(1, inputData[idx] || 0));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
+    return pcm16;
+  }
+
+  calculateRms(buffer) {
+    let sum = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      sum += buffer[i] * buffer[i];
+    }
+    return Math.sqrt(sum / buffer.length);
   }
 
   // --- Transcript Log Formatting & Auto-scroll ---
