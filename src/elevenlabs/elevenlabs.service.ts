@@ -29,6 +29,7 @@ export class ElevenLabsService {
     text: string,
     abortSignal?: AbortSignal,
   ): Promise<Buffer> {
+    const startTime = Date.now();
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.config.voiceId}?output_format=${this.config.outputFormat}&optimize_streaming_latency=${this.config.latencyOptimization}`;
 
     const headers = {
@@ -64,18 +65,24 @@ export class ElevenLabsService {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
+      const buffer = Buffer.from(arrayBuffer);
+      const durationMs = Date.now() - startTime;
+      this.logger.log(
+        `[ElevenLabs TTS] Buffer generated in ${durationMs}ms (${text.length} chars, ${(buffer.length / 1024).toFixed(1)} KB PCM audio)`,
+      );
+      return buffer;
     } catch (error: unknown) {
+      const durationMs = Date.now() - startTime;
       if (
         (error instanceof Error && error.name === 'AbortError') ||
         abortSignal?.aborted
       ) {
         this.logger.log(
-          'ElevenLabs buffer generation aborted due to interruption',
+          `ElevenLabs buffer generation aborted due to interruption after ${durationMs}ms`,
         );
         return Buffer.alloc(0);
       }
-      this.logger.error(`ElevenLabs speech synthesis failed: ${String(error)}`);
+      this.logger.error(`ElevenLabs speech synthesis failed after ${durationMs}ms: ${String(error)}`);
       throw error;
     }
   }
@@ -87,7 +94,14 @@ export class ElevenLabsService {
     text: string,
     onChunk: (chunk: Buffer) => void,
     abortSignal?: AbortSignal,
-  ): Promise<void> {
+    onFirstChunk?: (ttfcMs: number) => void,
+  ): Promise<{ ttfbMs: number; ttfcMs: number; totalDurationMs: number; totalBytes: number }> {
+    const startTime = Date.now();
+    let ttfbMs = 0;
+    let ttfcMs = 0;
+    let totalBytes = 0;
+    let firstChunkReported = false;
+
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.config.voiceId}/stream?output_format=${this.config.outputFormat}&optimize_streaming_latency=${this.config.latencyOptimization}`;
 
     const headers = {
@@ -115,6 +129,8 @@ export class ElevenLabsService {
         signal: abortSignal,
       });
 
+      ttfbMs = Date.now() - startTime;
+
       if (!response.ok || !response.body) {
         const errorText = await response.text();
         throw new Error(
@@ -128,7 +144,7 @@ export class ElevenLabsService {
       while (true) {
         if (abortSignal?.aborted) {
           this.logger.log(
-            'ElevenLabs stream aborted immediately due to caller interruption',
+            `ElevenLabs stream aborted immediately due to caller interruption after ${Date.now() - startTime}ms`,
           );
           try {
             await reader.cancel();
@@ -144,36 +160,66 @@ export class ElevenLabsService {
           if (leftover.length > 0 && !abortSignal?.aborted) {
             const evenLength = leftover.length - (leftover.length % 2);
             if (evenLength > 0) {
-              onChunk(leftover.subarray(0, evenLength));
+              const chunk = leftover.subarray(0, evenLength);
+              totalBytes += chunk.length;
+              onChunk(chunk);
             }
           }
           break;
         }
 
         if (value && !abortSignal?.aborted) {
+          if (!firstChunkReported) {
+            ttfcMs = Date.now() - startTime;
+            firstChunkReported = true;
+            if (onFirstChunk) {
+              onFirstChunk(ttfcMs);
+            }
+          }
+
           const combined = leftover.length > 0
             ? Buffer.concat([leftover, Buffer.from(value)])
             : Buffer.from(value);
           const evenLength = combined.length - (combined.length % 2);
           if (evenLength > 0) {
-            onChunk(combined.subarray(0, evenLength));
+            const chunk = combined.subarray(0, evenLength);
+            totalBytes += chunk.length;
+            onChunk(chunk);
             leftover = combined.subarray(evenLength);
           } else {
             leftover = combined;
           }
         }
       }
+
+      const totalDurationMs = Date.now() - startTime;
+      this.logger.log(
+        `[ElevenLabs TTS] Stream completed | TTFB: ${ttfbMs}ms | First Chunk (TTFC): ${ttfcMs || totalDurationMs}ms | Total Stream: ${totalDurationMs}ms (${text.length} chars, ${(totalBytes / 1024).toFixed(1)} KB)`,
+      );
+
+      return {
+        ttfbMs,
+        ttfcMs: ttfcMs || totalDurationMs,
+        totalDurationMs,
+        totalBytes,
+      };
     } catch (error: unknown) {
+      const totalDurationMs = Date.now() - startTime;
       if (
         (error instanceof Error && error.name === 'AbortError') ||
         abortSignal?.aborted
       ) {
         this.logger.log(
-          'ElevenLabs streaming aborted due to barge-in interrupt',
+          `ElevenLabs streaming aborted due to barge-in interrupt after ${totalDurationMs}ms`,
         );
-        return;
+        return {
+          ttfbMs,
+          ttfcMs: ttfcMs || totalDurationMs,
+          totalDurationMs,
+          totalBytes,
+        };
       }
-      this.logger.error(`ElevenLabs streaming error: ${String(error)}`);
+      this.logger.error(`ElevenLabs streaming error after ${totalDurationMs}ms: ${String(error)}`);
       throw error;
     }
   }

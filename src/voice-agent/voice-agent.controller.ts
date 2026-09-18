@@ -86,6 +86,7 @@ export class VoiceAgentController {
       hasAudio: Boolean(result.audioBuffer),
       audioBuffer: result.audioBuffer,
       customer: result.customer,
+      timings: result.timings,
     };
   }
 
@@ -106,6 +107,7 @@ export class VoiceAgentController {
       toolLogs: result.toolLogs || [],
       hasAudio: Boolean(result.audioBuffer),
       audioBuffer: result.audioBuffer,
+      timings: result.timings,
     };
   }
 }

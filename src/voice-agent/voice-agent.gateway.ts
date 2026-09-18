@@ -45,10 +45,10 @@ export class VoiceAgentGateway
             data: { transcript, isFinal },
           });
         },
-        onAiReply: (text: string, toolLogs?: string[]) => {
+        onAiReply: (text: string, toolLogs?: string[], timings?: any) => {
           this.sendJson(client, {
             event: 'ai_reply',
-            data: { text, toolLogs },
+            data: { text, toolLogs, timings },
           });
         },
         onAudioChunk: (chunk: Buffer) => {
@@ -92,10 +92,10 @@ export class VoiceAgentGateway
 
       // Trigger backend 2-phase greeting (state CLI, lookup DB, report customer details)
       void this.voiceAgentService.sendInitialGreeting(sessionId, cli, {
-        onAiReply: (text: string, toolLogs?: string[]) => {
+        onAiReply: (text: string, toolLogs?: string[], timings?: any) => {
           this.sendJson(client, {
             event: 'ai_reply',
-            data: { text, toolLogs },
+            data: { text, toolLogs, timings },
           });
         },
         onAudioChunk: (chunk: Buffer) => {

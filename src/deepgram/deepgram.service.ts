@@ -66,6 +66,8 @@ export class DeepgramService {
         sample_rate: VOICE_AGENT_CONFIG.deepgram.sample_rate,
       })) as unknown as LiveSocketInterface;
 
+      let lastSpeechStartTime = 0;
+
       socket.on('message', (raw: unknown) => {
         const data = raw as DeepgramMessageEvent;
         if (
@@ -81,12 +83,20 @@ export class DeepgramService {
             if (callbacks.onSpeechStarted) {
               callbacks.onSpeechStarted();
             }
+            if (isFinal) {
+              const sttDuration = lastSpeechStartTime ? `${Date.now() - lastSpeechStartTime}ms` : 'stream';
+              this.logger.log(
+                `[Deepgram STT] Final transcript received (${sttDuration}): "${transcript.trim()}"`,
+              );
+            }
             callbacks.onTranscript(transcript, isFinal);
           }
         } else if (
           data &&
           (data.type === 'SpeechStarted' || data.speech_started)
         ) {
+          lastSpeechStartTime = Date.now();
+          this.logger.log('[Deepgram STT] User speech started detected');
           if (callbacks.onSpeechStarted) {
             callbacks.onSpeechStarted();
           }

@@ -296,31 +296,106 @@ export class VoiceAgentService {
   }
 
   /**
+   * Helper to format and output structured latency breakdown logs
+   */
+  private logLatencyBreakdown(timings: {
+    title: string;
+    contextInfo: string;
+    userInput?: string;
+    dbLookupMs: number;
+    llmTotalMs?: number;
+    llmIterations?: number;
+    llmCallsMs?: number[];
+    toolCalls?: { name: string; durationMs: number }[];
+    sanitizationMs?: number;
+    ttsTtfbMs?: number;
+    ttsTtfcMs?: number;
+    ttsTotalMs?: number;
+    timeToFirstAudioMs?: number;
+    totalMs: number;
+  }) {
+    const lines: string[] = [
+      `\n[VoiceAgent] ┌────────────────────────── RESPONSE TIME BREAKDOWN ──────────────────────────`,
+      `[VoiceAgent] │ Context: ${timings.title} | ${timings.contextInfo}`,
+    ];
+
+    if (timings.userInput) {
+      const truncated =
+        timings.userInput.length > 70
+          ? timings.userInput.substring(0, 67) + '...'
+          : timings.userInput;
+      lines.push(`[VoiceAgent] │ Input: "${truncated}"`);
+    }
+
+    lines.push(`[VoiceAgent] ├─────────────────────────────────────────────────────────────────────────────`);
+    lines.push(`[VoiceAgent] │ ⏱️ CRM / DB Profile Lookup:       ${timings.dbLookupMs} ms`);
+
+    if (timings.llmTotalMs !== undefined) {
+      let llmDetail = `${timings.llmTotalMs} ms`;
+      const tools = timings.toolCalls || [];
+      if (tools.length > 0) {
+        const toolsDesc = tools
+          .map((t) => `${t.name} [${t.durationMs}ms]`)
+          .join(', ');
+        llmDetail += ` (${timings.llmIterations || 1} LLM call${(timings.llmIterations || 1) > 1 ? 's' : ''}, Tools: ${toolsDesc})`;
+      } else if (timings.llmIterations && timings.llmIterations > 1) {
+        llmDetail += ` (${timings.llmIterations} LLM calls)`;
+      }
+      lines.push(`[VoiceAgent] │ ⏱️ OpenAI LLM Reasoning:          ${llmDetail}`);
+    }
+
+    if (timings.sanitizationMs !== undefined) {
+      lines.push(`[VoiceAgent] │ ⏱️ Speech Text Sanitization:      ${timings.sanitizationMs} ms`);
+    }
+
+    if (timings.ttsTtfcMs !== undefined && timings.ttsTotalMs !== undefined) {
+      lines.push(`[VoiceAgent] │ ⏱️ ElevenLabs TTS Stream:`);
+      lines.push(`[VoiceAgent] │    ├─ Time to First Chunk (TTFC): ${timings.ttsTtfcMs} ms`);
+      lines.push(`[VoiceAgent] │    └─ Full Stream Duration:       ${timings.ttsTotalMs} ms`);
+    } else if (timings.ttsTotalMs !== undefined) {
+      lines.push(`[VoiceAgent] │ ⏱️ ElevenLabs TTS Generation:     ${timings.ttsTotalMs} ms`);
+    }
+
+    lines.push(`[VoiceAgent] ├─────────────────────────────────────────────────────────────────────────────`);
+    if (timings.timeToFirstAudioMs !== undefined) {
+      lines.push(`[VoiceAgent] │ 🚀 TIME TO FIRST AUDIO (TTFA):    ${timings.timeToFirstAudioMs} ms (caller hears agent audio)`);
+      lines.push(`[VoiceAgent] │ 🏁 TOTAL TURN PIPELINE TIME:      ${timings.totalMs} ms`);
+    } else {
+      lines.push(`[VoiceAgent] │ 🚀 TOTAL RESPONSE LATENCY:        ${timings.totalMs} ms`);
+    }
+    lines.push(`[VoiceAgent] └─────────────────────────────────────────────────────────────────────────────\n`);
+
+    this.logger.log(lines.join('\n'));
+  }
+
+  /**
    * Triggers initial backend voice agent greeting & audio stream for a new session
    */
   async sendInitialGreeting(
     sessionId: string,
     cli: string,
     callbacks: {
-      onAiReply: (text: string, toolLogs?: string[]) => void;
+      onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
       onAudioChunk: (chunk: Buffer) => void;
     },
   ): Promise<void> {
+    const greetingStart = Date.now();
     const session = this.activeSessions.get(sessionId);
     const normalizedCli = normalizeAustralianPhone(cli || '');
+    
     // Lookup customer profile in MongoDB Atlas
+    const dbStart = Date.now();
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
           normalizedCli,
         )
       : null;
+    const dbLookupMs = Date.now() - dbStart;
 
     if (session) {
       session.cli = normalizedCli;
       session.customerProfile = profile;
     }
-
-    const spokenCli = formatPhoneForSpeech(cli || normalizedCli);
 
     let greetingText = '';
     if (profile && profile.customer) {
@@ -334,7 +409,10 @@ export class VoiceAgentService {
     if (session) {
       session.history.push({ role: 'assistant', content: greetingText });
     }
-    callbacks.onAiReply(greetingText);
+
+    let ttsTtfcMs: number | undefined;
+    let ttsTotalMs: number | undefined;
+    let timeToFirstAudioMs: number | undefined;
 
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
@@ -345,8 +423,9 @@ export class VoiceAgentService {
           session.isSpeaking = true;
         }
 
+        const ttsStart = Date.now();
         const ttsText = sanitizeTextForSpeech(greetingText);
-        await this.elevenLabsService.streamSpeech(
+        const streamResult = await this.elevenLabsService.streamSpeech(
           ttsText,
           (chunk) => {
             if (!abortCtrl.signal.aborted) {
@@ -354,7 +433,17 @@ export class VoiceAgentService {
             }
           },
           abortCtrl.signal,
+          (ttfc) => {
+            ttsTtfcMs = ttfc;
+            timeToFirstAudioMs = Date.now() - greetingStart;
+          },
         );
+
+        ttsTotalMs = streamResult.totalDurationMs;
+        if (!ttsTtfcMs) {
+          ttsTtfcMs = streamResult.ttfcMs;
+          timeToFirstAudioMs = Date.now() - greetingStart;
+        }
 
         if (session && session.currentTurnId === turnId) {
           session.isSpeaking = false;
@@ -364,6 +453,25 @@ export class VoiceAgentService {
     } catch (err) {
       this.logger.warn(`Initial greeting TTS failed: ${String(err)}`);
     }
+
+    const totalMs = Date.now() - greetingStart;
+    this.logLatencyBreakdown({
+      title: 'Initial Greeting (Stream)',
+      contextInfo: `Session: ${sessionId} | CLI: "${cli || 'Anonymous'}"`,
+      dbLookupMs,
+      ttsTtfcMs,
+      ttsTotalMs,
+      timeToFirstAudioMs,
+      totalMs,
+    });
+
+    callbacks.onAiReply(greetingText, [], {
+      dbLookupMs,
+      ttsTtfcMs,
+      ttsTotalMs,
+      timeToFirstAudioMs,
+      totalMs,
+    });
   }
 
   /**
@@ -373,14 +481,18 @@ export class VoiceAgentService {
     text: string;
     audioBuffer?: string;
     customer?: any;
+    timings?: any;
   }> {
+    const greetingStart = Date.now();
     const normalizedCli = normalizeAustralianPhone(cli || '');
 
+    const dbStart = Date.now();
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
           normalizedCli,
         )
       : null;
+    const dbLookupMs = Date.now() - dbStart;
 
     let greetingText = '';
     if (profile && profile.customer) {
@@ -392,11 +504,14 @@ export class VoiceAgentService {
     }
 
     let audioBase64: string | undefined;
+    let ttsTotalMs: number | undefined;
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const ttsStart = Date.now();
         const ttsText = sanitizeTextForSpeech(greetingText);
         const pcmBuffer =
           await this.elevenLabsService.generateSpeechBuffer(ttsText);
+        ttsTotalMs = Date.now() - ttsStart;
         audioBase64 = pcmBuffer.toString('base64');
       }
     } catch (err: unknown) {
@@ -405,10 +520,24 @@ export class VoiceAgentService {
       );
     }
 
+    const totalMs = Date.now() - greetingStart;
+    this.logLatencyBreakdown({
+      title: 'Initial Greeting (REST)',
+      contextInfo: `CLI: "${cli || 'Anonymous'}"`,
+      dbLookupMs,
+      ttsTotalMs,
+      totalMs,
+    });
+
     return {
       text: greetingText,
       audioBuffer: audioBase64,
       customer: profile,
+      timings: {
+        dbLookupMs,
+        ttsTotalMs,
+        totalMs,
+      },
     };
   }
 
@@ -472,20 +601,26 @@ export class VoiceAgentService {
     session: VoiceAgentSession,
     userText: string,
     callbacks: {
-      onAiReply: (text: string, toolLogs?: string[]) => void;
+      onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
       onAudioChunk: (chunk: Buffer) => void;
       onBargeIn: () => void;
     },
   ): Promise<void> {
+    const turnStart = Date.now();
     session.history.push({ role: 'user', content: userText });
 
     // If caller was unidentified, attempt lookup from speech
+    const dbStart = Date.now();
+    let dbLookupMs = 0;
     if (!session.customerProfile) {
       const foundProfile =
         await this.customerDatabaseService.getFullCustomerProfile(userText);
+      dbLookupMs = Date.now() - dbStart;
       if (foundProfile) {
         session.customerProfile = foundProfile;
       }
+    } else {
+      dbLookupMs = Date.now() - dbStart;
     }
 
     // Build messages from history
@@ -502,14 +637,14 @@ export class VoiceAgentService {
     );
 
     try {
-      const { text: aiReply, toolLogs } =
+      const llmStart = Date.now();
+      const { text: aiReply, toolLogs, timings: openAiTimings } =
         await this.openAiService.generateResponse(
           messages,
           customerContext,
         );
+      const llmTotalMs = Date.now() - llmStart;
       session.history.push({ role: 'assistant', content: aiReply });
-
-      callbacks.onAiReply(aiReply, toolLogs);
 
       // Start new TTS turn with dedicated AbortController
       const thisTurnId = ++session.currentTurnId;
@@ -518,8 +653,16 @@ export class VoiceAgentService {
       session.isSpeaking = true;
       session.lastSpeechTime = Date.now();
 
+      const sanitizeStart = Date.now();
       const ttsText = sanitizeTextForSpeech(aiReply);
-      await this.elevenLabsService.streamSpeech(
+      const sanitizationMs = Date.now() - sanitizeStart;
+
+      let ttsTtfcMs: number | undefined;
+      let ttsTotalMs: number | undefined;
+      let timeToFirstAudioMs: number | undefined;
+
+      const ttsStart = Date.now();
+      const streamResult = await this.elevenLabsService.streamSpeech(
         ttsText,
         (chunk) => {
           // Verify turn hasn't been interrupted
@@ -532,15 +675,49 @@ export class VoiceAgentService {
           }
         },
         abortController.signal,
+        (ttfc) => {
+          ttsTtfcMs = ttfc;
+          timeToFirstAudioMs = Date.now() - turnStart;
+        },
       );
+
+      ttsTotalMs = streamResult.totalDurationMs;
+      if (!ttsTtfcMs) {
+        ttsTtfcMs = streamResult.ttfcMs;
+        timeToFirstAudioMs = Date.now() - turnStart;
+      }
 
       if (session.currentTurnId === thisTurnId) {
         session.isSpeaking = false;
         session.activeAbortController = null;
       }
+
+      const totalMs = Date.now() - turnStart;
+      const turnTimings = {
+        dbLookupMs,
+        llmTotalMs,
+        llmIterations: openAiTimings?.iterations,
+        llmCallsMs: openAiTimings?.llmCallsMs,
+        toolCalls: openAiTimings?.toolCalls,
+        sanitizationMs,
+        ttsTtfcMs,
+        ttsTotalMs,
+        timeToFirstAudioMs,
+        totalMs,
+      };
+
+      this.logLatencyBreakdown({
+        title: `Live Voice Turn #${thisTurnId}`,
+        contextInfo: `Session: ${session.sessionId} | CLI: "${session.cli || 'Anonymous'}"`,
+        userInput: userText,
+        ...turnTimings,
+      });
+
+      callbacks.onAiReply(aiReply, toolLogs, turnTimings);
     } catch (error: unknown) {
+      const totalMs = Date.now() - turnStart;
       this.logger.error(
-        `Error processing speech turn for session ${session.sessionId}:`,
+        `Error processing speech turn for session ${session.sessionId} after ${totalMs}ms:`,
         error,
       );
       session.isSpeaking = false;
@@ -555,10 +732,17 @@ export class VoiceAgentService {
     userText: string,
     history: ConversationTurn[] = [],
     cli: string = '',
-  ): Promise<{ text: string; toolLogs?: string[]; audioBuffer?: string }> {
+  ): Promise<{
+    text: string;
+    toolLogs?: string[];
+    audioBuffer?: string;
+    timings?: any;
+  }> {
+    const requestStart = Date.now();
     const normalizedCli = normalizeAustralianPhone(cli || '');
     
     // 1. Resolve profile by CLI or userText
+    const dbStart = Date.now();
     let profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(
           normalizedCli,
@@ -568,6 +752,7 @@ export class VoiceAgentService {
     if (!profile && userText) {
       profile = await this.customerDatabaseService.getFullCustomerProfile(userText);
     }
+    const dbLookupMs = Date.now() - dbStart;
 
     const customerContext = this.formatCustomerContextForPrompt(
       profile,
@@ -587,18 +772,23 @@ export class VoiceAgentService {
         content: m.content,
       }));
 
+    const llmStart = Date.now();
     const result = await this.openAiService.generateResponse(
       messages,
       customerContext,
     );
+    const llmTotalMs = Date.now() - llmStart;
 
     let audioBase64: string | undefined;
+    let ttsTotalMs: number | undefined;
     try {
       if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+        const ttsStart = Date.now();
         const ttsText = sanitizeTextForSpeech(result.text);
         const pcmBuffer = await this.elevenLabsService.generateSpeechBuffer(
           ttsText,
         );
+        ttsTotalMs = Date.now() - ttsStart;
         audioBase64 = pcmBuffer.toString('base64');
       }
     } catch (err: unknown) {
@@ -607,10 +797,29 @@ export class VoiceAgentService {
       );
     }
 
+    const totalMs = Date.now() - requestStart;
+    const responseTimings = {
+      dbLookupMs,
+      llmTotalMs,
+      llmIterations: result.timings?.iterations,
+      llmCallsMs: result.timings?.llmCallsMs,
+      toolCalls: result.timings?.toolCalls,
+      ttsTotalMs,
+      totalMs,
+    };
+
+    this.logLatencyBreakdown({
+      title: 'Text Message Processing',
+      contextInfo: `CLI: "${normalizedCli || 'Anonymous'}"`,
+      userInput: userText,
+      ...responseTimings,
+    });
+
     return {
       text: result.text,
       toolLogs: result.toolLogs,
       audioBuffer: audioBase64,
+      timings: responseTimings,
     };
   }
 

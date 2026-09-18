@@ -58,6 +58,7 @@ export class CustomerDatabaseService {
     const qTrimmed = query.trim();
     if (!qTrimmed) return null;
 
+    const startTime = Date.now();
     try {
       // Clean common conversational prefixes like "My name is...", "Rego is..."
       const cleanPhrase = qTrimmed
@@ -76,16 +77,18 @@ export class CustomerDatabaseService {
         .replace(/[^a-zA-Z0-9]/g, '')
         .toUpperCase();
 
+      let foundCustomer: Customer | null = null;
+
       // 1. Try direct customer_id match
       if (cleanAlphanumeric.length >= 3) {
         let customer = await this.customerModel
           .findOne({ customer_id: cleanAlphanumeric })
           .lean();
-        if (customer) return customer;
+        if (customer) foundCustomer = customer;
       }
 
       // 2. Try normalized phone match (e.g. +61412000006)
-      if (normalizedPhone) {
+      if (!foundCustomer && normalizedPhone) {
         let customer = await this.customerModel
           .findOne({
             $or: [
@@ -94,11 +97,11 @@ export class CustomerDatabaseService {
             ],
           })
           .lean();
-        if (customer) return customer;
+        if (customer) foundCustomer = customer;
       }
 
       // 3. Try digit substring match if query contains numbers (6+ digits)
-      if (cleanDigits.length >= 6) {
+      if (!foundCustomer && cleanDigits.length >= 6) {
         let customer = await this.customerModel
           .findOne({
             $or: [
@@ -107,29 +110,30 @@ export class CustomerDatabaseService {
             ],
           })
           .lean();
-        if (customer) return customer;
+        if (customer) foundCustomer = customer;
       }
 
       // 4. Try vehicle rego match (cleanAlphanumeric e.g. CF62ZZ or cleanPhrase e.g. C F 6 2 Z Z)
-      if (cleanAlphanumeric.length >= 3 && cleanAlphanumeric.length <= 10) {
-        // Match directly or regex
+      if (!foundCustomer && cleanAlphanumeric.length >= 3 && cleanAlphanumeric.length <= 10) {
         let customer = await this.customerModel
           .findOne({
             'vehicles.rego': { $regex: `^${cleanAlphanumeric}$`, $options: 'i' },
           })
           .lean();
-        if (customer) return customer;
-
-        customer = await this.customerModel
-          .findOne({
-            'vehicles.rego': { $regex: cleanAlphanumeric, $options: 'i' },
-          })
-          .lean();
-        if (customer) return customer;
+        if (customer) {
+          foundCustomer = customer;
+        } else {
+          customer = await this.customerModel
+            .findOne({
+              'vehicles.rego': { $regex: cleanAlphanumeric, $options: 'i' },
+            })
+            .lean();
+          if (customer) foundCustomer = customer;
+        }
       }
 
       // 5. Try customer full name, preferred name, or vehicle rego with cleanPhrase
-      if (cleanPhrase.length >= 2) {
+      if (!foundCustomer && cleanPhrase.length >= 2) {
         const escapedPhrase = this.escapeRegex(cleanPhrase);
         let customer = await this.customerModel
           .findOne({
@@ -140,30 +144,47 @@ export class CustomerDatabaseService {
             ],
           })
           .lean();
-        if (customer) return customer;
+        if (customer) foundCustomer = customer;
       }
 
       // 6. Token search (for compound queries e.g. "Jacob Wilson CF62ZZ", "Sarah Chen Defender")
-      const words = cleanPhrase.split(/\s+/).filter((w) => w.length >= 2);
-      for (const word of words) {
-        const cleanWordAlpha = word.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        const escapedWord = this.escapeRegex(word);
+      if (!foundCustomer) {
+        const words = cleanPhrase.split(/\s+/).filter((w) => w.length >= 2);
+        for (const word of words) {
+          const cleanWordAlpha = word.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+          const escapedWord = this.escapeRegex(word);
 
-        let customer = await this.customerModel
-          .findOne({
-            $or: [
-              { customer_name: { $regex: escapedWord, $options: 'i' } },
-              { preferred_name: { $regex: escapedWord, $options: 'i' } },
-              { 'vehicles.rego': { $regex: cleanWordAlpha || escapedWord, $options: 'i' } },
-            ],
-          })
-          .lean();
-        if (customer) return customer;
+          let customer = await this.customerModel
+            .findOne({
+              $or: [
+                { customer_name: { $regex: escapedWord, $options: 'i' } },
+                { preferred_name: { $regex: escapedWord, $options: 'i' } },
+                { 'vehicles.rego': { $regex: cleanWordAlpha || escapedWord, $options: 'i' } },
+              ],
+            })
+            .lean();
+          if (customer) {
+            foundCustomer = customer;
+            break;
+          }
+        }
       }
 
-      return null;
+      const duration = Date.now() - startTime;
+      if (foundCustomer) {
+        this.logger.log(
+          `[CustomerDB] findCustomer("${query}") found "${foundCustomer.customer_name}" in ${duration}ms`,
+        );
+      } else {
+        this.logger.debug(
+          `[CustomerDB] findCustomer("${query}") returned null in ${duration}ms`,
+        );
+      }
+
+      return foundCustomer;
     } catch (err: unknown) {
-      this.logger.error(`Error searching customer for "${query}":`, err);
+      const duration = Date.now() - startTime;
+      this.logger.error(`[CustomerDB] Error searching customer for "${query}" (${duration}ms):`, err);
       return null;
     }
   }
@@ -174,6 +195,7 @@ export class CustomerDatabaseService {
   async getFullCustomerProfile(
     query: string,
   ): Promise<FullCustomerProfile | null> {
+    const startTime = Date.now();
     try {
       const customer = await this.findCustomer(query);
       if (!customer) {
@@ -194,6 +216,11 @@ export class CustomerDatabaseService {
         this.authorisedContactModel.findOne({ customer_id: customerId }).lean(),
       ]);
 
+      const totalDuration = Date.now() - startTime;
+      this.logger.log(
+        `[CustomerDB] getFullCustomerProfile("${query}") fully populated in ${totalDuration}ms (Customer: ${customer.customer_name}, ROs: ${repair_orders.length}, Bookings: ${service_bookings.length})`,
+      );
+
       return {
         customer,
         repair_orders,
@@ -202,7 +229,8 @@ export class CustomerDatabaseService {
         authorised_contacts,
       };
     } catch (err: unknown) {
-      this.logger.error(`Error fetching full customer profile for "${query}":`, err);
+      const totalDuration = Date.now() - startTime;
+      this.logger.error(`[CustomerDB] Error fetching full customer profile for "${query}" (${totalDuration}ms):`, err);
       return null;
     }
   }

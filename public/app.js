@@ -181,6 +181,9 @@ class SimpleVoiceAgent {
             this.statusText.textContent = 'Live Call Active';
           } else if (msg.event === 'ai_reply' && msg.data && msg.data.text) {
             this.statusText.textContent = 'Live Call Active';
+            if (msg.data.timings) {
+              console.log('[VoiceAgent Client] Turn Timings:', msg.data.timings);
+            }
             this.history.push({ role: 'assistant', content: msg.data.text });
             this.addTranscript('agent', msg.data.text);
             if (msg.data.audioBuffer) {

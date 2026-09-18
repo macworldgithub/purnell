@@ -199,4 +199,23 @@ describe('VoiceAgentModule & Interruption Handling Tests', () => {
       expect(sanitized).toContain('zero four one two, zero zero zero, zero zero six');
     });
   });
+
+  describe('Response Time & Latency Breakdown Tracking', () => {
+    it('should measure and return response timing metrics on processTextMessage', async () => {
+      const result = await service.processTextMessage('Hello, need a service booking', [], '0412000006');
+      expect(result).toBeDefined();
+      expect(result.timings).toBeDefined();
+      expect(typeof result.timings.totalMs).toBe('number');
+      expect(typeof result.timings.dbLookupMs).toBe('number');
+      expect(typeof result.timings.llmTotalMs).toBe('number');
+    });
+
+    it('should measure and return greeting timing metrics on generateInitialGreeting', async () => {
+      const result = await service.generateInitialGreeting('0412000006');
+      expect(result).toBeDefined();
+      expect(result.timings).toBeDefined();
+      expect(typeof result.timings.totalMs).toBe('number');
+      expect(typeof result.timings.dbLookupMs).toBe('number');
+    });
+  });
 });

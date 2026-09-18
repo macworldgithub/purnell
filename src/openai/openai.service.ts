@@ -30,6 +30,18 @@ interface ParsedToolResult {
   success?: boolean;
 }
 
+export interface ToolCallTiming {
+  name: string;
+  durationMs: number;
+}
+
+export interface OpenAiResponseTimings {
+  totalMs: number;
+  iterations: number;
+  llmCallsMs: number[];
+  toolCalls: ToolCallTiming[];
+}
+
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
@@ -256,7 +268,9 @@ ${kbText.trim()}
     name: string,
     args: Record<string, unknown>,
   ): Promise<string> {
+    const toolStart = Date.now();
     try {
+      let result: string;
       switch (name) {
         case 'verifyPentanaCustomer': {
           const payload = args as VerifyCustomerArgs;
@@ -270,11 +284,12 @@ ${kbText.trim()}
               : '';
 
           if (!customerName || !registration) {
-            return JSON.stringify({
+            result = JSON.stringify({
               verified: false,
               message:
                 'Unable to verify those details. Please check the information and try again.',
             });
+            break;
           }
 
           const [nameProfile, registrationProfile] = await Promise.all([
@@ -289,14 +304,15 @@ ${kbText.trim()}
             !registrationCustomer ||
             nameCustomer.customer_id !== registrationCustomer.customer_id
           ) {
-            return JSON.stringify({
+            result = JSON.stringify({
               verified: false,
               message:
                 'Unable to verify those details. Please check the information and try again.',
             });
+            break;
           }
 
-          return JSON.stringify({
+          result = JSON.stringify({
             verified: true,
             customer: {
               customer_id: nameCustomer.customer_id,
@@ -311,6 +327,7 @@ ${kbText.trim()}
               authorised_contacts: nameProfile?.authorised_contacts || null,
             },
           });
+          break;
         }
 
         case 'lookupPentanaCustomer': {
@@ -348,7 +365,7 @@ ${kbText.trim()}
 
             const log = `[PENTANA / DMS LOOKUP]\n✓ Record found in Pentana CRM for "${query}":\nCustomer: ${c.customer_name} (ID: ${c.customer_id})\nVehicle: ${vDesc}\nOpen RO: ${ro ? `RO #${ro.ro_number} (${ro.status} — Advisor: ${ro.advisor})` : 'None'}\nUpcoming Booking: ${bk ? `${bk.date} at ${bk.time} (${bk.job_type})` : 'None'}\nParts Order: ${ptDesc}`;
 
-            return JSON.stringify({
+            result = JSON.stringify({
               found: true,
               simulatedLog: log,
               customer: {
@@ -364,21 +381,24 @@ ${kbText.trim()}
                 authorised_contacts: profile.authorised_contacts,
               },
             });
+            break;
           }
 
           // 2. Fallback to static mock data in PentanaService
           const customer = this.pentanaService.searchCustomer(query);
           if (!customer) {
-            return JSON.stringify({
+            result = JSON.stringify({
               found: false,
               message: `[PENTANA LOOKUP]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana CRM. Please check by customer full name or vehicle registration plate.`,
             });
+            break;
           }
-          return JSON.stringify({
+          result = JSON.stringify({
             found: true,
             simulatedLog: `[PENTANA LOOKUP]\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
             customer,
           });
+          break;
         }
 
         case 'checkStaffAvailability': {
@@ -387,42 +407,51 @@ ${kbText.trim()}
             typeof payload.staffName === 'string' ? payload.staffName : '';
           const staff = this.pentanaService.checkStaff(staffName);
           if (!staff) {
-            return JSON.stringify({
+            result = JSON.stringify({
               found: false,
               message: `Staff member "${staffName}" not found in dealership registry.`,
             });
+            break;
           }
-          return JSON.stringify({
+          result = JSON.stringify({
             found: true,
             name: staff.name,
             role: staff.role,
             status: staff.status,
             department: staff.department,
           });
+          break;
         }
 
         case 'queryAppointmentSlots': {
-          return JSON.stringify({
+          result = JSON.stringify({
             slots: this.pentanaService
               .getAppointmentSlots()
               .filter((s: AppointmentSlot) => s.available),
           });
+          break;
         }
 
         case 'createHandoffRecord': {
           const formatted = this.pentanaService.formatHandoffRecord(args);
           this.logger.log(`Created Handoff Record:\n${formatted}`);
-          return JSON.stringify({
+          result = JSON.stringify({
             success: true,
             handoffRecord: formatted,
           });
+          break;
         }
 
         default:
-          return JSON.stringify({ error: `Unknown tool ${name}` });
+          result = JSON.stringify({ error: `Unknown tool ${name}` });
+          break;
       }
+      const duration = Date.now() - toolStart;
+      this.logger.log(`[Tool Call] "${name}" executed in ${duration}ms`);
+      return result;
     } catch (err: unknown) {
-      this.logger.error(`Error executing tool call ${name}:`, err);
+      const duration = Date.now() - toolStart;
+      this.logger.error(`Error executing tool call ${name} after ${duration}ms:`, err);
       return JSON.stringify({
         found: false,
         error: `Tool execution failed: ${String(err)}`,
@@ -447,7 +476,8 @@ ${kbText.trim()}
   async generateResponse(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     customerContext?: string,
-  ): Promise<{ text: string; toolLogs?: string[] }> {
+  ): Promise<{ text: string; toolLogs?: string[]; timings?: OpenAiResponseTimings }> {
+    const overallStart = Date.now();
     let systemPromptContent = this.getSystemPrompt();
     if (customerContext) {
       systemPromptContent += `\n\n===============================================================================\nCURRENT INBOUND CALLER CONTEXT (INJECTED BY CRM):\n${customerContext}\n===============================================================================`;
@@ -465,6 +495,8 @@ ${kbText.trim()}
     const tools = this.getAvailableTools();
     const chatModel = this.getChatModel();
     const toolLogs: string[] = [];
+    const llmCallsMs: number[] = [];
+    const toolCalls: ToolCallTiming[] = [];
 
     const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
       [...fullMessages];
@@ -473,6 +505,7 @@ ${kbText.trim()}
 
     while (iteration < maxToolIterations) {
       iteration++;
+      const llmCallStart = Date.now();
 
       try {
         const response = await this.openai.chat.completions.create({
@@ -481,6 +514,9 @@ ${kbText.trim()}
           tools,
           temperature: this.config.temperature,
         });
+
+        const llmDuration = Date.now() - llmCallStart;
+        llmCallsMs.push(llmDuration);
 
         const choice = response.choices[0];
         const message = choice?.message;
@@ -502,7 +538,10 @@ ${kbText.trim()}
                 toolArgs = {};
               }
 
+              const toolStart = Date.now();
               const toolResult = await this.executeToolCall(toolName, toolArgs);
+              const toolDuration = Date.now() - toolStart;
+              toolCalls.push({ name: toolName, durationMs: toolDuration });
 
               try {
                 const parsed = JSON.parse(toolResult) as ParsedToolResult;
@@ -526,23 +565,44 @@ ${kbText.trim()}
 
         // Return final text response from the model
         if (message.content && message.content.trim().length > 0) {
+          const totalMs = Date.now() - overallStart;
+          const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
+          const totalToolsTime = toolCalls.reduce((a, b) => a + b.durationMs, 0);
+          this.logger.log(
+            `[OpenAiService] Response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
+          );
           return {
             text: message.content.trim(),
             toolLogs,
+            timings: {
+              totalMs,
+              iterations: iteration,
+              llmCallsMs,
+              toolCalls,
+            },
           };
         }
 
         break;
       } catch (err: unknown) {
-        this.logger.error(`OpenAI completion error on iteration ${iteration}:`, err);
+        const llmDuration = Date.now() - llmCallStart;
+        llmCallsMs.push(llmDuration);
+        this.logger.error(`OpenAI completion error on iteration ${iteration} after ${llmDuration}ms:`, err);
         break;
       }
     }
 
+    const totalMs = Date.now() - overallStart;
     // Safe fallback if loop terminated without content
     return {
       text: "Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?",
       toolLogs,
+      timings: {
+        totalMs,
+        iterations: iteration,
+        llmCallsMs,
+        toolCalls,
+      },
     };
   }
 }
