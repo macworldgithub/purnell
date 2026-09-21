@@ -126,6 +126,12 @@ export interface VoiceAgentSession {
   activeAbortController: AbortController | null;
   currentTurnId: number;
   lastSpeechTime: number;
+  callbacks?: {
+    onTranscript: (transcript: string, isFinal: boolean) => void;
+    onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
+    onAudioChunk: (chunk: Buffer) => void;
+    onBargeIn: () => void;
+  };
 }
 
 @Injectable()
@@ -260,6 +266,7 @@ export class VoiceAgentService {
       activeAbortController: null,
       currentTurnId: 0,
       lastSpeechTime: Date.now(),
+      callbacks,
     };
 
     // Initialize Deepgram live STT session
@@ -579,6 +586,58 @@ export class VoiceAgentService {
       session.isSpeaking = false;
       session.currentTurnId++;
     }
+  }
+
+  /**
+   * Return session by ID
+   */
+  getSession(sessionId: string): VoiceAgentSession | undefined {
+    return this.activeSessions.get(sessionId);
+  }
+
+  /**
+   * Process incoming user text input with real-time sentence-by-sentence TTS streaming
+   */
+  async processUserTextTurn(
+    sessionId: string,
+    userText: string,
+    clientHistory?: ConversationTurn[],
+    cli?: string,
+  ): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session || !session.callbacks) {
+      this.logger.warn(
+        `Session ${sessionId} not found or has no callbacks; skipping streaming text turn`,
+      );
+      return;
+    }
+
+    if (cli && !session.cli) {
+      session.cli = normalizeAustralianPhone(cli);
+    }
+
+    if (!session.customerProfile && session.cli) {
+      session.customerProfile =
+        await this.customerDatabaseService.getFullCustomerProfile(session.cli);
+    }
+
+    if (
+      session.history.length === 0 &&
+      clientHistory &&
+      clientHistory.length > 0
+    ) {
+      const priorHistory = clientHistory.filter(
+        (m, idx) =>
+          !(
+            idx === clientHistory.length - 1 &&
+            m.role === 'user' &&
+            m.content === userText
+          ),
+      );
+      session.history = [...priorHistory];
+    }
+
+    await this.processUserSpeech(session, userText, session.callbacks);
   }
 
   /**

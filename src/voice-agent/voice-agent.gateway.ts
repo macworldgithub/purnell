@@ -164,15 +164,25 @@ export class VoiceAgentGateway
   ) {
     const sessionId = this.clientSessionMap.get(client);
     if (sessionId && payload?.text) {
-      const result = await this.voiceAgentService.processTextMessage(
-        payload.text,
-        payload.history || [],
-        payload.cli || '',
-      );
-      this.sendJson(client, {
-        event: 'ai_reply',
-        data: result,
-      });
+      const session = this.voiceAgentService.getSession(sessionId);
+      if (session && session.callbacks) {
+        await this.voiceAgentService.processUserTextTurn(
+          sessionId,
+          payload.text,
+          payload.history || [],
+          payload.cli || '',
+        );
+      } else {
+        const result = await this.voiceAgentService.processTextMessage(
+          payload.text,
+          payload.history || [],
+          payload.cli || '',
+        );
+        this.sendJson(client, {
+          event: 'ai_reply',
+          data: result,
+        });
+      }
     }
   }
 
