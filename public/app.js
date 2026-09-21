@@ -126,6 +126,7 @@ class SimpleVoiceAgent {
     this.connectPipeline();
   }
 
+
   endCall() {
     this.isCallActive = false;
     this.isProcessingSpeech = false;
@@ -138,11 +139,11 @@ class SimpleVoiceAgent {
     }
 
     if (this.recognition) {
-      try { this.recognition.stop(); } catch (e) {}
+      try { this.recognition.stop(); } catch (e) { }
     }
 
     if (this.ws) {
-      try { this.ws.close(); } catch (e) {}
+      try { this.ws.close(); } catch (e) { }
       this.ws = null;
     }
     this.wsConnected = false;
@@ -295,7 +296,7 @@ class SimpleVoiceAgent {
         if (this.ws && this.wsConnected) {
           try {
             this.ws.send(JSON.stringify({ event: 'stop_agent_speaking', data: {} }));
-          } catch (e) {}
+          } catch (e) { }
         }
       }
 
@@ -332,7 +333,7 @@ class SimpleVoiceAgent {
         } catch (e) {
           setTimeout(() => {
             if (this.isCallActive) {
-              try { this.recognition.start(); } catch (err) {}
+              try { this.recognition.start(); } catch (err) { }
             }
           }, 200);
         }
@@ -342,7 +343,7 @@ class SimpleVoiceAgent {
 
   startSpeechRecognition() {
     if (this.recognition) {
-      try { this.recognition.start(); } catch (e) {}
+      try { this.recognition.start(); } catch (e) { }
     }
   }
 
@@ -520,7 +521,7 @@ class SimpleVoiceAgent {
       try {
         src.stop();
         src.disconnect();
-      } catch (e) {}
+      } catch (e) { }
     }
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
