@@ -19,9 +19,11 @@ import {
 } from './schemas/authorised-contact.schema';
 import { CustomerDatabaseService } from './customer-database.service';
 
-const mongoUri =
-  process.env.MONGO_URI ||
-  'mongodb+srv://salman:4lanHyMRdCrtXDJ7@sign365.nglnioh.mongodb.net/Purnell_Pentana_VoiceAgent?retryWrites=true&w=majority';
+const mongoUri = process.env.MONGO_URI;
+
+if (!mongoUri) {
+  throw new Error('MONGO_URI is required to connect to the customer database.');
+}
 
 @Module({
   imports: [

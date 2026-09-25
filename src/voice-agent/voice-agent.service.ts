@@ -163,6 +163,25 @@ export class VoiceAgentService {
     return this.openAiService.getSystemPrompt();
   }
 
+  /** Returns only the caller identity needed to personalize GPT-Live's opening. */
+  async getLiveCallerContext(cli: string): Promise<{ greeting: string; callerKnown: boolean }> {
+    const normalizedCli = normalizeAustralianPhone(cli || '');
+    const profile = normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
+      : null;
+    if (profile?.customer) {
+      const name = profile.customer.preferred_name || profile.customer.customer_name;
+      return {
+        callerKnown: true,
+        greeting: `Purnell Motors, Blakehurst. This number is registered to ${name}. Am I speaking with ${name}? How can I help you with your vehicle today?`,
+      };
+    }
+    return {
+      callerKnown: false,
+      greeting: 'Hello, this is Purnell Motors in Blakehurst. We can help with vehicle servicing and repairs, genuine parts, vehicle sales, and test drives. What can I help you with today?',
+    };
+  }
+
   /**
    * Helper to format verified customer context for OpenAI system prompt injection
    */
@@ -814,6 +833,7 @@ export class VoiceAgentService {
     userText: string,
     history: ConversationTurn[] = [],
     cli: string = '',
+    generateAudio = true,
   ): Promise<{
     text: string;
     toolLogs?: string[];
@@ -864,7 +884,7 @@ export class VoiceAgentService {
     let audioBase64: string | undefined;
     let ttsTotalMs: number | undefined;
     try {
-      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
+      if (generateAudio && VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
         const ttsStart = Date.now();
         const ttsText = sanitizeTextForSpeech(result.text);
         const pcmBuffer = await this.elevenLabsService.generateSpeechBuffer(
