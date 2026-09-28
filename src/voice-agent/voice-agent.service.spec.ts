@@ -1,4 +1,3 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CustomerDatabaseService, FullCustomerProfile } from '../customer-database/customer-database.service';
 import { OpenAiService } from '../openai/openai.service';
@@ -39,14 +38,14 @@ describe('VoiceAgentService GPT-Live backend', () => {
     expect(context.greeting).toContain('Jordan');
   });
 
-  it('introduces the business before asking an unknown caller what they need', async () => {
+  it('asks an unknown caller for registration details to verify their account', async () => {
     customerDatabase.getFullCustomerProfile.mockResolvedValue(null);
 
     const context = await service.getLiveCallerContext('');
 
     expect(context.callerKnown).toBe(false);
-    expect(context.greeting).toContain('vehicle servicing and repairs');
-    expect(context.greeting).toContain('What can I help you with today?');
+    expect(context.greeting).toContain('Our voice service is available to registered customers');
+    expect(context.greeting).toContain('May I have your full name and vehicle registration');
   });
 
   it('delegates text to the configured reasoning model without generating speech', async () => {

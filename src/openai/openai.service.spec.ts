@@ -64,7 +64,7 @@ describe('OpenAiService privacy verification', () => {
     expect(result).toEqual({
       verified: false,
       message:
-        'Unable to verify those details. Please check the information and try again.',
+        'I could not verify those details. Purnell services registered customers only. I can take a message for our team to help with registration.',
     });
     expect(JSON.stringify(result)).not.toContain('Priya');
     expect(JSON.stringify(result)).not.toContain('Fatima');
