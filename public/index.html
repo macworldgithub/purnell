@@ -15,11 +15,18 @@
     <!-- Title Header -->
     <header class="header">
       <h1>Purnell Motors Voice Agent</h1>
-      <p class="subtitle">Enter incoming caller phone number and click Start Voice Agent</p>
+      <p class="subtitle">Select a voice model, enter the caller phone number, then start the agent</p>
     </header>
 
     <!-- Caller CLI Settings Section -->
     <section class="cli-card">
+      <div class="cli-input-group">
+        <label for="voiceModel" class="cli-label">Voice model:</label>
+        <select id="voiceModel" class="cli-input voice-model-select">
+          <option value="pipeline">Current pipeline (Deepgram + OpenAI + ElevenLabs)</option>
+          <option value="gpt-live-1">OpenAI GPT-Live-1 (speech-to-speech)</option>
+        </select>
+      </div>
       <div class="cli-input-group">
         <label for="cliInput" class="cli-label">Incoming Phone Number (CLI):</label>
         <input 

@@ -1,10 +1,83 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Controller,
+  Get,
+  Logger,
+  Post,
+  Body,
+} from '@nestjs/common';
 import { VoiceAgentService, ConversationTurn } from './voice-agent.service';
 import { HandoffRecord } from '../pentana/pentana.data';
+import { OpenAiService } from '../openai/openai.service';
 
 @Controller('voice-agent')
 export class VoiceAgentController {
-  constructor(private readonly voiceAgentService: VoiceAgentService) {}
+  private readonly logger = new Logger(VoiceAgentController.name);
+
+  constructor(
+    private readonly voiceAgentService: VoiceAgentService,
+    private readonly openAiService: OpenAiService,
+  ) {}
+
+  @Post('live/session')
+  async createLiveSession(@Body('sdp') sdp: string, @Body('cli') cli?: string) {
+    if (!sdp || typeof sdp !== 'string') {
+      throw new BadRequestException('A WebRTC SDP offer is required.');
+    }
+
+    try {
+      this.logger.log('Creating GPT-Live-1 WebRTC session.');
+      const callerContext = await this.voiceAgentService.getLiveCallerContext(cli || '');
+      const session = await this.openAiService.createLiveSession(sdp, callerContext);
+      this.logger.log(`GPT-Live-1 session created (sessionId: ${session.session.id}).`);
+      return {
+        success: true,
+        session: session.session,
+        transport: session.transport,
+      };
+    } catch (error) {
+      this.logger.error('GPT-Live-1 session creation failed.', error);
+      throw new BadGatewayException(
+        error instanceof Error
+          ? error.message
+          : 'Unable to create the GPT-Live-1 session.',
+      );
+    }
+  }
+
+  @Post('live/delegation')
+  async processLiveDelegation(
+    @Body('message') message: string,
+    @Body('history') history?: ConversationTurn[],
+    @Body('cli') cli?: string,
+  ) {
+    if (!message?.trim()) {
+      throw new BadRequestException('A transcript is required for delegation.');
+    }
+
+    const startedAt = Date.now();
+    this.logger.log(`GPT-Live delegation received (transcriptCharacters: ${message.trim().length}).`);
+    try {
+      const result = await this.voiceAgentService.processTextMessage(
+        message,
+        history || [],
+        cli || '',
+        false,
+      );
+      const toolCalls = result.timings?.toolCalls || [];
+      const toolSummary = toolCalls
+        .map((toolCall) => `${toolCall.name}:${toolCall.durationMs}ms`)
+        .join(', ') || 'none';
+      this.logger.log(
+        `GPT-Live delegation completed in ${Date.now() - startedAt}ms (responseCharacters: ${result.text.length}, tools: ${toolSummary}).`,
+      );
+      return { success: true, response: result.text, timings: result.timings };
+    } catch (error) {
+      this.logger.error(`GPT-Live delegation failed after ${Date.now() - startedAt}ms.`, error);
+      throw error;
+    }
+  }
 
   @Get('config')
   getConfig() {

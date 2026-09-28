@@ -28,6 +28,17 @@ class SimpleVoiceAgent {
     this.activeAudioSources = [];
     this.nextAudioStartTime = 0;
     this.pcmLeftoverBytes = null;
+    this.voiceModel = document.getElementById('voiceModel');
+    this.livePeer = null;
+    this.liveDataChannel = null;
+    this.liveMicStream = null;
+    this.liveAudioElement = null;
+    this.livePendingTranscript = '';
+    this.liveLastUserTurn = '';
+    this.liveAssistantTranscript = '';
+    this.liveGreetingEventId = null;
+    this.liveCallerWantsToEnd = false;
+    this.liveCloseTimeout = null;
 
     // Speech accumulation & debouncing state
     this.accumulatedTranscript = '';
@@ -105,10 +116,20 @@ class SimpleVoiceAgent {
     }
   }
 
+  logLiveDebug(action, details = {}) {
+    console.info(`[GPT-Live ${new Date().toISOString()}] ${action}`, details);
+  }
+
   async startCall() {
     this.isCallActive = true;
     this.isProcessingSpeech = false;
     this.accumulatedTranscript = '';
+    this.history = [];
+    this.livePendingTranscript = '';
+    this.liveLastUserTurn = '';
+    this.liveAssistantTranscript = '';
+    this.liveCallerWantsToEnd = false;
+    if (this.voiceModel) this.voiceModel.disabled = true;
     await this.resumeAudioContext();
 
     // Update UI button state
@@ -122,14 +143,53 @@ class SimpleVoiceAgent {
       this.placeholder.style.display = 'none';
     }
 
-    // Connect voice pipeline
-    this.connectPipeline();
+    // Connect the selected voice mode.
+    if (this.voiceModel && this.voiceModel.value === 'gpt-live-1') {
+      this.connectLiveModel();
+    } else {
+      this.connectPipeline();
+    }
   }
 
 
-  endCall() {
+  endCall(sessionAlreadyClosed = false) {
+    this.logLiveDebug('Call end requested', {
+      sessionAlreadyClosed,
+      isCallActive: this.isCallActive,
+      dataChannelState: this.liveDataChannel?.readyState || 'unavailable',
+      reason: this.liveCallerWantsToEnd ? 'caller requested goodbye' : 'UI or lifecycle',
+    });
+    if (
+      !sessionAlreadyClosed &&
+      this.isCallActive &&
+      this.liveDataChannel &&
+      this.liveDataChannel.readyState === 'open'
+    ) {
+      this.isCallActive = false;
+      if (this.liveMicStream) {
+        this.liveMicStream.getAudioTracks().forEach((track) => { track.enabled = false; });
+      }
+      this.statusText.textContent = 'Ending call...';
+      this.playBtnText.textContent = 'Ending Call';
+      this.playBtn.disabled = true;
+      const closeEventId = `live_close_${Date.now()}`;
+      this.logLiveDebug('Sending session.close; waiting for session.closed', { eventId: closeEventId });
+      this.sendLiveEvent({ type: 'session.close', event_id: closeEventId });
+      this.liveCloseTimeout = setTimeout(() => {
+        this.logLiveDebug('Timed out waiting for session.closed; forcing local cleanup');
+        this.endCall(true);
+      }, 5000);
+      return;
+    }
+
+    if (this.liveCloseTimeout) {
+      clearTimeout(this.liveCloseTimeout);
+      this.liveCloseTimeout = null;
+    }
     this.isCallActive = false;
     this.isProcessingSpeech = false;
+    if (this.voiceModel) this.voiceModel.disabled = false;
+    this.playBtn.disabled = false;
     this.accumulatedTranscript = '';
     this.stopAudio();
 
@@ -148,12 +208,286 @@ class SimpleVoiceAgent {
     }
     this.wsConnected = false;
 
+    if (this.liveDataChannel) {
+      try {
+        this.liveDataChannel.close();
+      } catch (error) {
+        this.logLiveDebug('Data channel cleanup failed', { message: error.message || String(error) });
+      }
+      this.liveDataChannel = null;
+    }
+    if (this.livePeer) {
+      try {
+        this.livePeer.close();
+      } catch (error) {
+        this.logLiveDebug('Peer connection cleanup failed', { message: error.message || String(error) });
+      }
+      this.livePeer = null;
+    }
+    if (this.liveMicStream) {
+      this.liveMicStream.getTracks().forEach((track) => track.stop());
+      this.liveMicStream = null;
+    }
+    if (this.liveAudioElement) {
+      this.liveAudioElement.pause();
+      this.liveAudioElement.srcObject = null;
+      this.liveAudioElement.remove();
+      this.liveAudioElement = null;
+    }
+
     // Reset UI button state
     this.playBtn.classList.remove('active');
     this.playBtnText.textContent = 'Start Voice Agent';
     this.playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
     this.statusBadge.className = 'status-badge idle';
     this.statusText.textContent = 'Call ended';
+  }
+
+  async connectLiveModel() {
+    try {
+      this.statusText.textContent = 'Requesting microphone...';
+      this.liveMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      if (!this.isCallActive) {
+        this.liveMicStream.getTracks().forEach((track) => track.stop());
+        this.liveMicStream = null;
+        return;
+      }
+
+      const peer = new RTCPeerConnection();
+      this.livePeer = peer;
+      this.liveAudioElement = document.createElement('audio');
+      this.liveAudioElement.autoplay = true;
+      this.liveAudioElement.playsInline = true;
+      this.liveAudioElement.style.display = 'none';
+      document.body.appendChild(this.liveAudioElement);
+      peer.ontrack = (event) => {
+        this.liveAudioElement.srcObject = event.streams[0];
+        this.liveAudioElement.play().catch((error) => {
+          console.warn('Live audio playback could not start automatically:', error);
+        });
+      };
+      this.liveMicStream.getAudioTracks().forEach((track) => {
+        peer.addTrack(track, this.liveMicStream);
+      });
+
+      const channel = peer.createDataChannel('oai-events');
+      this.liveDataChannel = channel;
+      channel.onopen = () => this.logLiveDebug('Data channel open');
+      channel.onclose = () => this.logLiveDebug('Data channel closed');
+      channel.onmessage = (event) => this.handleLiveEvent(event.data);
+      channel.onerror = (event) => {
+        this.logLiveDebug('Data channel error', { message: event.message || 'see console event' });
+        console.error('GPT-Live data channel error:', event);
+      };
+      peer.onconnectionstatechange = () => this.logLiveDebug('WebRTC connection state', { state: peer.connectionState });
+
+      this.statusText.textContent = 'Connecting to GPT-Live-1...';
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      await this.waitForIceGathering(peer);
+      const sdp = peer.localDescription && peer.localDescription.sdp;
+      if (!sdp) throw new Error('The browser did not create a WebRTC offer.');
+
+      const response = await fetch('/voice-agent/live/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sdp,
+          cli: normalizeAustralianPhone(this.cliInput ? this.cliInput.value : ''),
+        }),
+      });
+      const result = await response.json();
+      this.logLiveDebug('Live session creation response', { httpStatus: response.status, success: Boolean(result.success) });
+      if (!response.ok || !result.success || !result.transport?.sdp) {
+        throw new Error(result.message || 'Could not create a GPT-Live-1 session.');
+      }
+      await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp });
+    } catch (error) {
+      this.logLiveDebug('Live connection failed', { message: error.message || String(error) });
+      console.error('GPT-Live connection failed:', error);
+      if (this.isCallActive) {
+        this.endCall();
+        this.statusText.textContent = error.message || 'GPT-Live connection failed';
+      }
+    }
+  }
+
+  waitForIceGathering(peer) {
+    if (peer.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        peer.removeEventListener('icegatheringstatechange', onStateChange);
+        reject(new Error('Timed out while preparing the browser voice connection.'));
+      }, 10000);
+      const onStateChange = () => {
+        if (peer.iceGatheringState !== 'complete') return;
+        clearTimeout(timeout);
+        peer.removeEventListener('icegatheringstatechange', onStateChange);
+        resolve();
+      };
+      peer.addEventListener('icegatheringstatechange', onStateChange);
+      onStateChange();
+    });
+  }
+
+  handleLiveEvent(rawEvent) {
+    let event;
+    try {
+      event = JSON.parse(rawEvent);
+    } catch (error) {
+      console.warn('Could not parse GPT-Live event:', error);
+      return;
+    }
+
+    if (typeof event.type !== 'string' || !event.type.endsWith('.delta')) {
+      this.logLiveDebug('Received Live event', {
+        type: event.type,
+        eventId: event.event_id,
+        clientEventId: event.client_event_id,
+        delegationId: event.delegation?.id,
+        delegationTarget: event.delegation?.target,
+        errorCode: event.error?.code,
+        errorMessage: event.error?.message,
+      });
+    }
+
+    if (event.type === 'session.started') {
+      this.statusText.textContent = 'GPT-Live-1 call active';
+      this.liveGreetingEventId = `live_greeting_${Date.now()}`;
+      this.sendLiveEvent({
+        type: 'session.instructions.append',
+        event_id: this.liveGreetingEventId,
+        delegation_id: null,
+        content: 'Immediately start speaking. Say the opening greeting from your session instructions now, without waiting for the caller to speak. Then pause and listen.',
+      });
+    } else if (
+      event.type === 'session.instructions.appended' &&
+      event.client_event_id === this.liveGreetingEventId
+    ) {
+      this.logLiveDebug('Greeting instruction accepted', { clientEventId: event.client_event_id });
+    } else if (event.type === 'session.input_transcript.delta') {
+      if (!this.livePendingTranscript) this.flushLiveAssistantTranscript();
+      this.livePendingTranscript += event.delta || '';
+    } else if (event.type === 'session.input_transcript.done') {
+      const finalTranscript = (event.transcript || this.livePendingTranscript).trim();
+      if (finalTranscript) {
+        this.livePendingTranscript = finalTranscript;
+        this.flushLiveUserTranscript();
+        this.liveCallerWantsToEnd = /\b(bye|goodbye|farewell|hang\s*up|end (?:the )?call|that(?:'s| is) all|nothing else|i(?:'m| am) done)\b/i.test(finalTranscript);
+        this.logLiveDebug('Caller end intent evaluated', {
+          detected: this.liveCallerWantsToEnd,
+          transcriptCharacters: finalTranscript.length,
+        });
+      }
+    } else if (event.type === 'session.output_transcript.delta') {
+      this.flushLiveUserTranscript();
+      this.liveAssistantTranscript += event.delta || '';
+    } else if (event.type === 'session.output_audio.done') {
+      this.logLiveDebug('Assistant audio finished', { callerRequestedEnd: this.liveCallerWantsToEnd });
+      if (this.liveCallerWantsToEnd) this.endCall();
+    } else if (event.type === 'session.delegation.created') {
+      if (event.delegation && event.delegation.target === 'client') {
+        this.handleLiveDelegation(event.delegation.id);
+      }
+    } else if (event.type === 'session.error' || event.type === 'error') {
+      console.error('GPT-Live session error:', event.error || event);
+      this.statusText.textContent = event.error?.message || 'GPT-Live session error';
+    } else if (event.type === 'session.closed') {
+      this.logLiveDebug('Live session closed', { reason: event.reason, usage: event.usage });
+      this.endCall(true);
+    }
+  }
+
+  sendLiveEvent(event) {
+    if (this.liveDataChannel && this.liveDataChannel.readyState === 'open') {
+      this.logLiveDebug('Sending Live event', { type: event.type, eventId: event.event_id, delegationId: event.delegation_id });
+      this.liveDataChannel.send(JSON.stringify(event));
+    } else {
+      this.logLiveDebug('Cannot send Live event: data channel is not open', {
+        type: event.type,
+        dataChannelState: this.liveDataChannel?.readyState || 'unavailable',
+      });
+    }
+  }
+
+  flushLiveAssistantTranscript() {
+    const text = this.liveAssistantTranscript.trim();
+    if (text) {
+      this.logLiveDebug('Assistant transcript turn complete', { characters: text.length });
+      this.history.push({ role: 'assistant', content: text });
+      this.addTranscript('agent', text);
+      this.liveAssistantTranscript = '';
+    }
+  }
+
+  flushLiveUserTranscript() {
+    const text = this.livePendingTranscript.trim();
+    if (!text) return;
+    this.logLiveDebug('Caller transcript turn complete', { characters: text.length });
+    this.history.push({ role: 'user', content: text });
+    this.liveLastUserTurn = text;
+    this.livePendingTranscript = '';
+    this.addTranscript('user', text);
+  }
+
+  async handleLiveDelegation(delegationId) {
+    // Let any transcript deltas for the triggering utterance reach the browser first.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (!this.isCallActive || !delegationId) return;
+
+    const message = (this.livePendingTranscript || this.liveLastUserTurn).trim();
+    if (!message) {
+      this.logLiveDebug('Delegation skipped: no caller transcript available', { delegationId });
+      console.warn('GPT-Live requested backend work without a transcript.');
+      return;
+    }
+    if (this.livePendingTranscript.trim()) {
+      this.flushLiveUserTranscript();
+    }
+    this.statusText.textContent = 'Checking dealership information...';
+    this.logLiveDebug('Delegation request started', { delegationId, transcriptCharacters: message.length });
+
+    const cli = normalizeAustralianPhone(this.cliInput ? this.cliInput.value : '');
+    try {
+      const response = await fetch('/voice-agent/live/delegation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history: this.history, cli }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.response) {
+        throw new Error(result.message || 'The dealership assistant could not complete that request.');
+      }
+      this.logLiveDebug('Delegation request completed', {
+        delegationId,
+        httpStatus: response.status,
+        responseCharacters: result.response.length,
+        timings: result.timings,
+      });
+      this.sendLiveEvent({
+        type: 'session.commentary.append',
+        event_id: `backend_result_${Date.now()}`,
+        delegation_id: delegationId,
+        content: result.response,
+      });
+      this.statusText.textContent = 'GPT-Live-1 call active';
+    } catch (error) {
+      this.logLiveDebug('Delegation request failed', { delegationId, message: error.message || String(error) });
+      console.error('GPT-Live backend delegation failed:', error);
+      this.sendLiveEvent({
+        type: 'session.commentary.append',
+        event_id: `backend_error_${Date.now()}`,
+        delegation_id: delegationId,
+        content: 'I could not check that information just now. Please try again or ask me to take a message.',
+      });
+      this.statusText.textContent = 'GPT-Live-1 call active';
+    }
   }
 
   // --- Voice Pipeline Connection (WebSocket with Clean Fallback) ---

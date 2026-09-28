@@ -140,6 +140,33 @@ ${kbText.trim()}
     };
   }
 
+  /** Creates a browser WebRTC session using GPT-Live-1. */
+  async createLiveSession(sdp: string, callerContext: { greeting: string; callerKnown: boolean }) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is required to start GPT-Live-1.');
+    }
+
+    return this.openai.live.create({
+      session: {
+        model: 'gpt-live-1',
+        instructions: [
+          'You are the warm, concise voice receptionist for Purnell Motors in Australia.',
+          `Open the call by saying exactly this greeting, then pause and listen: ${callerContext.greeting}`,
+          callerContext.callerKnown
+            ? 'A caller number matched this name. Ask whether you are speaking with them before discussing personal customer, vehicle, repair, parts, or booking details.'
+            : 'The caller number did not match a customer. You have already introduced the business and its services; first ask what they need, then collect only details relevant to that request. For a service request, collect name, callback number, vehicle registration or VIN, vehicle details, concern, and preferred timing as needed.' ,
+          'Speak naturally in Australian English. Answer simple conversational questions directly. For customer verification/profile, repair orders, parts status, appointment availability, staff availability, and callback or staff handoff, delegate to the application backend before answering. Use the backend result; never invent dealership or customer information.',
+          'The backend can verify and look up CRM records, query available appointment slots, check staff availability, and record a callback or handoff. It cannot create or confirm a service booking. Never say a booking is made unless a connected booking tool confirms it.',
+          'If the caller clearly says goodbye, asks to hang up, or says they are finished, respond with a brief polite farewell and then stop. The application will close the session after your farewell audio finishes. Do not keep asking follow-up questions.',
+          'Never invent dealership or customer information. Follow the backend result and do not reveal personal data unless the caller is verified.',
+        ].join(' '),
+        audio: { output: { voice: 'ripple' } },
+        delegation: { type: 'client' },
+      },
+      transport: { type: 'webrtc', sdp },
+    });
+  }
+
   /**
    * Available function-calling tools for the brain
    */
