@@ -53,9 +53,7 @@ export class OpenAiService {
     private readonly pentanaService: PentanaService,
     private readonly customerDatabaseService: CustomerDatabaseService,
   ) {
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || '',
-    });
+    this.openai = new OpenAI({ apiKey: this.config.apiKey });
     this.loadSystemPromptAndKB();
     this.logger.log(
       `OpenAI Brain Service initialized (Model: ${this.config.model})`,
@@ -120,26 +118,6 @@ ${kbText.trim()}
     return this.cachedSystemPrompt;
   }
 
-  /**
-   * Returns OpenAI Realtime session configuration
-   */
-  getRealtimeSessionConfig(): Record<string, unknown> {
-    return {
-      model: this.config.model,
-      modalities: ['text', 'audio'],
-      instructions: this.getSystemPrompt(),
-      turn_detection: {
-        type: this.config.vad.type,
-        threshold: this.config.vad.threshold,
-        prefix_padding_ms: this.config.vad.prefix_padding_ms,
-        silence_duration_ms: this.config.vad.silence_duration_ms,
-        barge_in_grace_ms: this.config.vad.barge_in_grace_ms,
-      },
-      temperature: this.config.temperature,
-      tools: this.getAvailableTools(),
-    };
-  }
-
   /** Creates a browser WebRTC session using GPT-Live-1. */
   async createLiveSession(sdp: string, callerContext: { greeting: string; callerKnown: boolean }) {
     if (!process.env.OPENAI_API_KEY) {
@@ -153,12 +131,12 @@ ${kbText.trim()}
           'You are the warm, concise voice receptionist for Purnell Motors in Australia.',
           `Open the call by saying exactly this greeting, then pause and listen: ${callerContext.greeting}`,
           callerContext.callerKnown
-            ? 'A caller number matched this name. Ask whether you are speaking with them before discussing personal customer, vehicle, repair, parts, or booking details.'
-            : 'The caller number did not match a customer. You have already introduced the business and its services; first ask what they need, then collect only details relevant to that request. For a service request, collect name, callback number, vehicle registration or VIN, vehicle details, concern, and preferred timing as needed.' ,
+            ? 'The incoming number uniquely matches a registered customer. Start with the provided greeting, which addresses them by their preferred name. Treat the caller as verified and help them directly using only that matched customer record. Do not ask for their name, vehicle registration, or phone number for verification. Never reveal any other customer record.'
+            : 'The incoming number does not match a customer record. Ask for the caller full name and vehicle registration, then verify both against the same CRM record using verifyPentanaCustomer before providing any customer service. If verification fails, explain that Purnell services the registered customer only and offer to take a message for registration assistance. Do not collect service details, create requests, or discuss any customer record before verification.',
           'Speak naturally in Australian English. Answer simple conversational questions directly. For customer verification/profile, repair orders, parts status, appointment availability, staff availability, and callback or staff handoff, delegate to the application backend before answering. Use the backend result; never invent dealership or customer information.',
           'The backend can verify and look up CRM records, query available appointment slots, check staff availability, and record a callback or handoff. It cannot create or confirm a service booking. Never say a booking is made unless a connected booking tool confirms it.',
           'If the caller clearly says goodbye, asks to hang up, or says they are finished, respond with a brief polite farewell and then stop. The application will close the session after your farewell audio finishes. Do not keep asking follow-up questions.',
-          'Never invent dealership or customer information. Follow the backend result and do not reveal personal data unless the caller is verified.',
+          'Never invent dealership or customer information. Follow the backend result and do not reveal personal data unless the caller is verified. A caller may only receive information belonging to the single customer record verified for them; never reveal or confirm another customer record.',
         ].join(' '),
         audio: { output: { voice: 'ripple' } },
         delegation: { type: 'client' },
@@ -294,6 +272,7 @@ ${kbText.trim()}
   async executeToolCall(
     name: string,
     args: Record<string, unknown>,
+    authorizedCustomerId?: string,
   ): Promise<string> {
     const toolStart = Date.now();
     try {
@@ -314,7 +293,7 @@ ${kbText.trim()}
             result = JSON.stringify({
               verified: false,
               message:
-                'Unable to verify those details. Please check the information and try again.',
+                'I could not verify those details. Purnell services registered customers only. I can take a message for our team to help with registration.',
             });
             break;
           }
@@ -334,7 +313,7 @@ ${kbText.trim()}
             result = JSON.stringify({
               verified: false,
               message:
-                'Unable to verify those details. Please check the information and try again.',
+                'I could not verify those details. Purnell services registered customers only. I can take a message for our team to help with registration.',
             });
             break;
           }
@@ -358,6 +337,13 @@ ${kbText.trim()}
         }
 
         case 'lookupPentanaCustomer': {
+          if (!authorizedCustomerId) {
+            result = JSON.stringify({
+              found: false,
+              message: 'Caller verification is required before customer records can be accessed.',
+            });
+            break;
+          }
           const payload = args as LookupCustomerArgs;
           const query = typeof payload.query === 'string' ? payload.query : '';
 
@@ -366,6 +352,13 @@ ${kbText.trim()}
             await this.customerDatabaseService.getFullCustomerProfile(query);
           if (profile && profile.customer) {
             const c = profile.customer;
+            if (c.customer_id !== authorizedCustomerId) {
+              result = JSON.stringify({
+                found: false,
+                message: 'That customer record is not available for this caller.',
+              });
+              break;
+            }
             const v =
               c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
             const vDesc = v
@@ -411,19 +404,11 @@ ${kbText.trim()}
             break;
           }
 
-          // 2. Fallback to static mock data in PentanaService
-          const customer = this.pentanaService.searchCustomer(query);
-          if (!customer) {
-            result = JSON.stringify({
-              found: false,
-              message: `[PENTANA LOOKUP]\nSearching customer records for query: "${query}"...\n✗ No matching record found in Pentana CRM. Please check by customer full name or vehicle registration plate.`,
-            });
-            break;
-          }
+          // Static demo records have no customer ID to bind to the verified
+          // CRM identity, so never expose them through this tool.
           result = JSON.stringify({
-            found: true,
-            simulatedLog: `[PENTANA LOOKUP]\n✓ Match found: ${customer.name} | ${customer.vehicle} | Rego: ${customer.rego}\nOpen RO: ${customer.openRo || 'None'} | Parts: ${customer.partsStatus || 'None'} | Next Appt: ${customer.nextAppointment || 'None'}`,
-            customer,
+            found: false,
+            message: 'No matching customer record is available for this verified account.',
           });
           break;
         }
@@ -486,339 +471,123 @@ ${kbText.trim()}
     }
   }
 
-  /**
-   * Helper to ensure a chat-compatible model is used for completions
-   */
-  private getChatModel(): string {
-    const configured = this.config.model || 'gpt-4o-mini';
-    if (configured.includes('realtime')) {
-      return 'gpt-4o-mini';
-    }
-    return configured;
-  }
-
-  /**
-   * Helper to extract complete sentences from streaming text buffer
-   */
-  private extractReadySentences(buffer: string): {
-    sentences: string[];
-    remaining: string;
-  } {
-    const sentences: string[] = [];
-    let remaining = buffer;
-
-    // Match sentences ending with punctuation followed by space or newline
-    const sentenceRegex = /^(.*?[.!?])(?:\s+|\n+)(.*)$/s;
-    while (true) {
-      const match = remaining.match(sentenceRegex);
-      if (!match) break;
-      const sentence = match[1].trim();
-      // Avoid splitting prematurely on common abbreviations
-      if (
-        sentence.length >= 10 &&
-        !/(?:Ltd|Mr|Mrs|Ms|Dr|RO|NSW|Pty|St|Ave|Rd)\.$/i.test(sentence)
-      ) {
-        sentences.push(sentence);
-        remaining = match[2];
-      } else {
-        break;
-      }
-    }
-
-    return { sentences, remaining };
-  }
-
-  /**
-   * Generates AI brain text response with real-time sentence streaming support
-   */
   async generateResponse(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     customerContext?: string,
-    onSentenceChunk?: (sentence: string) => void,
-    abortSignal?: AbortSignal,
+    initialAuthorizedCustomerId?: string,
   ): Promise<{ text: string; toolLogs?: string[]; timings?: OpenAiResponseTimings }> {
     const overallStart = Date.now();
-    let systemPromptContent = this.getSystemPrompt();
+    let systemPrompt = this.getSystemPrompt();
     if (customerContext) {
-      systemPromptContent += `\n\n===============================================================================\nCURRENT INBOUND CALLER CONTEXT (INJECTED BY CRM):\n${customerContext}\n===============================================================================`;
+      systemPrompt += "\n\nCURRENT INBOUND CALLER CONTEXT (INJECTED BY CRM):\n" + customerContext;
     }
 
-    const systemMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
-      role: 'system',
-      content: systemPromptContent,
-    };
-
-    const fullMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      systemMessage,
+    const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
       ...messages,
     ];
-    const tools = this.getAvailableTools();
-    const chatModel = this.getChatModel();
     const toolLogs: string[] = [];
     const llmCallsMs: number[] = [];
     const toolCalls: ToolCallTiming[] = [];
-
-    const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      [...fullMessages];
     const maxToolIterations = 5;
-    let iteration = 0;
+    let authorizedCustomerId = initialAuthorizedCustomerId;
 
-    while (iteration < maxToolIterations) {
-      iteration++;
-      const llmCallStart = Date.now();
-
+    for (let iteration = 1; iteration <= maxToolIterations; iteration++) {
+      const callStartedAt = Date.now();
       try {
-        if (onSentenceChunk) {
-          // Streaming mode for instant sentence-by-sentence TTS delivery
-          const stream = await this.openai.chat.completions.create(
-            {
-              model: chatModel,
-              messages: currentMessages,
-              tools,
-              temperature: this.config.temperature,
-              stream: true,
-            },
-            { signal: abortSignal },
-          );
+        const response = await this.openai.chat.completions.create({
+          model: this.config.model,
+          messages: currentMessages,
+          tools: this.getAvailableTools(),
+          temperature: this.config.temperature,
+        });
+        llmCallsMs.push(Date.now() - callStartedAt);
 
-          let streamedContent = '';
-          let pendingBuffer = '';
-          const pendingToolCalls: Map<
-            number,
-            { id: string; name: string; arguments: string }
-          > = new Map();
-
-          for await (const chunk of stream) {
-            if (abortSignal?.aborted) break;
-
-            const delta = chunk.choices[0]?.delta;
-            if (!delta) continue;
-
-            if (delta.content) {
-              streamedContent += delta.content;
-              pendingBuffer += delta.content;
-
-              const { sentences, remaining } =
-                this.extractReadySentences(pendingBuffer);
-              for (const sentence of sentences) {
-                if (sentence.length > 0) {
-                  onSentenceChunk(sentence);
-                }
-              }
-              pendingBuffer = remaining;
+        const message = response.choices[0]?.message;
+        if (!message) break;
+        if (message.tool_calls?.length) {
+          currentMessages.push(message);
+          for (const toolCall of message.tool_calls) {
+            if (!('function' in toolCall) || !toolCall.function) continue;
+            let args: Record<string, unknown> = {};
+            try {
+              args = JSON.parse(toolCall.function.arguments || '{}') as Record<string, unknown>;
+            } catch {
+              // Invalid arguments are handled by the tool with empty defaults.
             }
 
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index;
-                const existing = pendingToolCalls.get(idx) || {
-                  id: tc.id || '',
-                  name: tc.function?.name || '',
-                  arguments: '',
-                };
-                if (tc.id) existing.id = tc.id;
-                if (tc.function?.name) existing.name = tc.function.name;
-                if (tc.function?.arguments) {
-                  existing.arguments += tc.function.arguments;
-                }
-                pendingToolCalls.set(idx, existing);
-              }
-            }
-          }
-
-          const llmDuration = Date.now() - llmCallStart;
-          llmCallsMs.push(llmDuration);
-
-          // If tool calls were requested, execute them and continue iteration
-          if (pendingToolCalls.size > 0) {
-            const toolCallArray = Array.from(pendingToolCalls.values()).map(
-              (tc) => ({
-                id: tc.id,
-                type: 'function' as const,
-                function: {
-                  name: tc.name,
-                  arguments: tc.arguments,
-                },
-              }),
-            );
-
-            currentMessages.push({
-              role: 'assistant',
-              content: streamedContent || null,
-              tool_calls: toolCallArray,
-            });
-
-            for (const tc of toolCallArray) {
-              let toolArgs: Record<string, unknown> = {};
-              try {
-                toolArgs = JSON.parse(
-                  tc.function.arguments || '{}',
-                ) as Record<string, unknown>;
-              } catch {
-                toolArgs = {};
-              }
-
-              const toolStart = Date.now();
-              const toolResult = await this.executeToolCall(
-                tc.function.name,
-                toolArgs,
-              );
-              const toolDuration = Date.now() - toolStart;
-              toolCalls.push({
-                name: tc.function.name,
-                durationMs: toolDuration,
-              });
-
-              try {
-                const parsed = JSON.parse(toolResult) as ParsedToolResult;
-                if (typeof parsed.simulatedLog === 'string') {
-                  toolLogs.push(parsed.simulatedLog);
-                }
-              } catch {
-                // ignore
-              }
-
+            if (
+              !authorizedCustomerId &&
+              toolCall.function.name !== 'verifyPentanaCustomer'
+            ) {
               currentMessages.push({
                 role: 'tool',
-                tool_call_id: tc.id,
-                content: toolResult,
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  authorized: false,
+                  message: 'Verify the caller as a registered customer before providing service or accessing customer records.',
+                }),
               });
+              continue;
             }
-            continue;
-          }
 
-          // Flush any final remaining text
-          if (pendingBuffer.trim().length > 0 && !abortSignal?.aborted) {
-            onSentenceChunk(pendingBuffer.trim());
-          }
-
-          if (streamedContent && streamedContent.trim().length > 0) {
-            const totalMs = Date.now() - overallStart;
-            const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
-            const totalToolsTime = toolCalls.reduce(
-              (a, b) => a + b.durationMs,
-              0,
+            const toolStartedAt = Date.now();
+            const result = await this.executeToolCall(
+              toolCall.function.name,
+              args,
+              authorizedCustomerId,
             );
-            this.logger.log(
-              `[OpenAiService] Streamed response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
-            );
-            return {
-              text: streamedContent.trim(),
-              toolLogs,
-              timings: {
-                totalMs,
-                iterations: iteration,
-                llmCallsMs,
-                toolCalls,
-              },
-            };
-          }
-        } else {
-          // Standard non-streaming mode
-          const response = await this.openai.chat.completions.create(
-            {
-              model: chatModel,
-              messages: currentMessages,
-              tools,
-              temperature: this.config.temperature,
-            },
-            { signal: abortSignal },
-          );
-
-          const llmDuration = Date.now() - llmCallStart;
-          llmCallsMs.push(llmDuration);
-
-          const choice = response.choices[0];
-          const message = choice?.message;
-          if (!message) break;
-
-          // If the model invoked tools, execute them and continue the reasoning loop
-          if (message.tool_calls && message.tool_calls.length > 0) {
-            currentMessages.push(message);
-
-            for (const toolCall of message.tool_calls) {
-              if ('function' in toolCall && toolCall.function) {
-                const toolName = toolCall.function.name;
-                let toolArgs: Record<string, unknown> = {};
-                try {
-                  toolArgs = JSON.parse(
-                    toolCall.function.arguments || '{}',
-                  ) as Record<string, unknown>;
-                } catch {
-                  toolArgs = {};
-                }
-
-                const toolStart = Date.now();
-                const toolResult = await this.executeToolCall(
-                  toolName,
-                  toolArgs,
-                );
-                const toolDuration = Date.now() - toolStart;
-                toolCalls.push({ name: toolName, durationMs: toolDuration });
-
-                try {
-                  const parsed = JSON.parse(toolResult) as ParsedToolResult;
-                  if (typeof parsed.simulatedLog === 'string') {
-                    toolLogs.push(parsed.simulatedLog);
-                  }
-                } catch {
-                  // ignore
-                }
-
-                currentMessages.push({
-                  role: 'tool',
-                  tool_call_id: toolCall.id,
-                  content: toolResult,
-                });
+            if (toolCall.function.name === 'verifyPentanaCustomer') {
+              try {
+                const verification = JSON.parse(result) as {
+                  verified?: boolean;
+                  customer?: { customer_id?: string };
+                };
+                authorizedCustomerId = verification.verified
+                  ? verification.customer?.customer_id
+                  : undefined;
+              } catch {
+                authorizedCustomerId = undefined;
               }
             }
-            continue;
+            toolCalls.push({ name: toolCall.function.name, durationMs: Date.now() - toolStartedAt });
+            try {
+              const parsed = JSON.parse(result) as ParsedToolResult;
+              if (typeof parsed.simulatedLog === 'string') toolLogs.push(parsed.simulatedLog);
+            } catch {
+              // Tool results still go to the model when they are not JSON.
+            }
+            currentMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result });
           }
-
-          // Return final text response from the model
-          if (message.content && message.content.trim().length > 0) {
-            const totalMs = Date.now() - overallStart;
-            const totalLlmTime = llmCallsMs.reduce((a, b) => a + b, 0);
-            const totalToolsTime = toolCalls.reduce(
-              (a, b) => a + b.durationMs,
-              0,
-            );
-            this.logger.log(
-              `[OpenAiService] Response generated in ${totalMs}ms (model: ${chatModel}, iterations: ${iteration}, llmTime: ${totalLlmTime}ms, toolsTime: ${totalToolsTime}ms, toolCalls: ${toolCalls.length})`,
-            );
-            return {
-              text: message.content.trim(),
-              toolLogs,
-              timings: {
-                totalMs,
-                iterations: iteration,
-                llmCallsMs,
-                toolCalls,
-              },
-            };
-          }
+          continue;
         }
 
+        if (message.content?.trim()) {
+          const totalMs = Date.now() - overallStart;
+          this.logger.log(
+            "[OpenAiService] Response generated in " + totalMs + "ms (model: " + this.config.model +
+            ", iterations: " + iteration + ", toolCalls: " + toolCalls.length + ")",
+          );
+          return {
+            text: message.content.trim(),
+            toolLogs,
+            timings: { totalMs, iterations: iteration, llmCallsMs, toolCalls },
+          };
+        }
         break;
-      } catch (err: unknown) {
-        const llmDuration = Date.now() - llmCallStart;
-        llmCallsMs.push(llmDuration);
-        this.logger.error(
-          `OpenAI completion error on iteration ${iteration} after ${llmDuration}ms:`,
-          err,
-        );
+      } catch (error) {
+        llmCallsMs.push(Date.now() - callStartedAt);
+        this.logger.error("OpenAI completion error on iteration " + iteration + ".", error);
         break;
       }
     }
 
-    const totalMs = Date.now() - overallStart;
-    // Safe fallback if loop terminated without content
     return {
       text: 'Purnell Motors, Blakehurst. May I please have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?',
       toolLogs,
       timings: {
-        totalMs,
-        iterations: iteration,
+        totalMs: Date.now() - overallStart,
+        iterations: llmCallsMs.length,
         llmCallsMs,
         toolCalls,
       },

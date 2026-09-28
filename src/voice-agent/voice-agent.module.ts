@@ -1,23 +1,13 @@
 import { Module } from '@nestjs/common';
 import { VoiceAgentService } from './voice-agent.service';
 import { VoiceAgentController } from './voice-agent.controller';
-import { VoiceAgentGateway } from './voice-agent.gateway';
-import { DeepgramModule } from '../deepgram/deepgram.module';
-import { ElevenLabsModule } from '../elevenlabs/elevenlabs.module';
 import { OpenAiModule } from '../openai/openai.module';
-import { PentanaModule } from '../pentana/pentana.module';
 import { CustomerDatabaseModule } from '../customer-database/customer-database.module';
 
 @Module({
-  imports: [
-    DeepgramModule,
-    ElevenLabsModule,
-    OpenAiModule,
-    PentanaModule,
-    CustomerDatabaseModule,
-  ],
+  imports: [OpenAiModule, CustomerDatabaseModule],
   controllers: [VoiceAgentController],
-  providers: [VoiceAgentService, VoiceAgentGateway],
+  providers: [VoiceAgentService],
   exports: [VoiceAgentService],
 })
 export class VoiceAgentModule {}

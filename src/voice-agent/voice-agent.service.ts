@@ -1,114 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
-import {
-  DeepgramService,
-  DeepgramLiveSession,
-} from '../deepgram/deepgram.service';
-import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
-import { OpenAiService } from '../openai/openai.service';
-import { PentanaService } from '../pentana/pentana.service';
-import {
-  VOICE_AGENT_CONFIG,
-  VoiceAgentConfig,
-} from '../config/voice-agent.config';
-import {
-  HandoffRecord,
-  PentanaCustomer,
-  StaffMember,
-  AppointmentSlot,
-} from '../pentana/pentana.data';
-
-import {
-  CustomerDatabaseService,
-  FullCustomerProfile,
-} from '../customer-database/customer-database.service';
+import { CustomerDatabaseService, FullCustomerProfile } from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
+import { OpenAiService } from '../openai/openai.service';
 
-const DIGIT_WORDS: Record<string, string> = {
-  '0': 'zero',
-  '1': 'one',
-  '2': 'two',
-  '3': 'three',
-  '4': 'four',
-  '5': 'five',
-  '6': 'six',
-  '7': 'seven',
-  '8': 'eight',
-  '9': 'nine',
-};
+const digitsToWords = (value: string): string => value.split('').join(' ');
 
-export function digitsToWords(digits: string): string {
-  return digits
-    .split('')
-    .map((d) => DIGIT_WORDS[d] || d)
-    .join(' ');
-}
-
-export function formatPhoneForSpeech(phone: string): string {
-  if (!phone) return 'your number';
+function formatPhoneForSpeech(phone: string): string {
   let digits = phone.replace(/\D/g, '');
-  if (digits.startsWith('61') && digits.length >= 10) {
-    digits = '0' + digits.slice(2);
+  if (digits.startsWith('61') && digits.length >= 10) digits = `0${digits.slice(2)}`;
+  if (digits.length === 10 && digits.startsWith('04')) {
+    return `${digitsToWords(digits.slice(0, 4))}, ${digitsToWords(digits.slice(4, 7))}, ${digitsToWords(digits.slice(7))}`;
   }
   if (digits.length === 10) {
-    // Australian mobile: 0412 000 006 -> "zero four one two, zero zero zero, zero zero six"
-    if (digits.startsWith('04')) {
-      return `${digitsToWords(digits.slice(0, 4))}, ${digitsToWords(digits.slice(4, 7))}, ${digitsToWords(digits.slice(7))}`;
-    }
-    // Australian landline: 02 8558 7000 -> "zero two, eight five five eight, seven zero zero zero"
     return `${digitsToWords(digits.slice(0, 2))}, ${digitsToWords(digits.slice(2, 6))}, ${digitsToWords(digits.slice(6))}`;
   }
-  if (digits.length >= 6) {
-    return digitsToWords(digits);
-  }
-  return phone;
-}
-
-/**
- * Sanitizes AI response text by converting phone numbers and digit strings
- * to explicit phonetic English words for 100% accurate TTS pronunciation.
- */
-export function sanitizeTextForSpeech(text: string): string {
-  if (!text) return '';
-  let sanitized = text;
-
-  // 1800 & 1300 numbers (e.g. 1800 808 180, 1800 819 181, 1300 XXX XXX)
-  sanitized = sanitized.replace(/\b1800\s*(\d{3})\s*(\d{3})\b/g, (_m, g1, g2) => {
-    return `one eight zero zero, ${digitsToWords(g1)}, ${digitsToWords(g2)}`;
-  });
-  sanitized = sanitized.replace(/\b1300\s*(\d{3})\s*(\d{3})\b/g, (_m, g1, g2) => {
-    return `one three zero zero, ${digitsToWords(g1)}, ${digitsToWords(g2)}`;
-  });
-
-  // Australian mobiles (04XX XXX XXX or +614XXXXXXXX or 04XXXXXXXX)
-  sanitized = sanitized.replace(/(?:\+61|0)(4\d{2})[\s-]?(\d{3})[\s-]?(\d{3})\b/g, (_m, g1, g2, g3) => {
-    return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
-  });
-
-  // Australian landlines (02/03/07/08 XXXX XXXX or (02) XXXX XXXX)
-  sanitized = sanitized.replace(/(?:\+61|0|\(0)([2378]\d)\)?[\s-]?(\d{4})[\s-]?(\d{4})\b/g, (_m, g1, g2, g3) => {
-    return `zero ${digitsToWords(g1)}, ${digitsToWords(g2)}, ${digitsToWords(g3)}`;
-  });
-
-  // RO numbers (e.g. RO #45821 or RO 45821)
-  sanitized = sanitized.replace(/\bRO\s*#?(\d+)\b/gi, (_m, roNum) => {
-    return `R O number ${digitsToWords(roNum)}`;
-  });
-
-  // Vehicle Rego patterns: 2-3 uppercase letters followed by 2-4 digits/letters (e.g. CF62ZZ, XYZ-001)
-  sanitized = sanitized.replace(/\b([A-Z]{2,3})[\s-]?(\d{2,4})[\s-]?([A-Z]{0,2})\b/g, (_m, l1, num, l2) => {
-    const letters1 = l1.split('').join(' ');
-    const numWords = digitsToWords(num);
-    const letters2 = l2 ? ' ' + l2.split('').join(' ') : '';
-    return `${letters1} ${numWords}${letters2}`;
-  });
-
-  // Isolated 3-10 digit numbers: convert to spaced words
-  sanitized = sanitized.replace(/\b(\d{3,10})\b/g, (_match, digits) => {
-    return digitsToWords(digits);
-  });
-
-  return sanitized;
+  return digits.length >= 6 ? digitsToWords(digits) : phone || 'your number';
 }
 
 export interface ConversationTurn {
@@ -116,848 +23,140 @@ export interface ConversationTurn {
   content: string;
 }
 
-export interface VoiceAgentSession {
-  sessionId: string;
-  cli?: string;
-  customerProfile?: FullCustomerProfile | null;
-  history: ConversationTurn[];
-  deepgramSession: DeepgramLiveSession | null;
-  isSpeaking: boolean;
-  activeAbortController: AbortController | null;
-  currentTurnId: number;
-  lastSpeechTime: number;
-  callbacks?: {
-    onTranscript: (transcript: string, isFinal: boolean) => void;
-    onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
-    onAudioChunk: (chunk: Buffer) => void;
-    onBargeIn: () => void;
-  };
+interface LiveDelegationTimings {
+  dbLookupMs: number;
+  llmTotalMs: number;
+  llmIterations?: number;
+  llmCallsMs?: number[];
+  toolCalls?: { name: string; durationMs: number }[];
+  totalMs: number;
 }
 
 @Injectable()
 export class VoiceAgentService {
   private readonly logger = new Logger(VoiceAgentService.name);
-  private activeSessions = new Map<string, VoiceAgentSession>();
 
   constructor(
-    private readonly deepgramService: DeepgramService,
-    private readonly elevenLabsService: ElevenLabsService,
     private readonly openAiService: OpenAiService,
-    private readonly pentanaService: PentanaService,
     private readonly customerDatabaseService: CustomerDatabaseService,
-  ) {
-    this.logger.log('VoiceAgentService Orchestrator initialized');
-  }
+  ) {}
 
-  /**
-   * Get full voice agent configuration
-   */
-  getConfig(): VoiceAgentConfig {
-    return VOICE_AGENT_CONFIG;
-  }
-
-  /**
-   * Get formatted System Prompt and Knowledge Base content
-   */
-  getFormattedSystemPrompt(): string {
-    return this.openAiService.getSystemPrompt();
-  }
-
-  /** Returns only the caller identity needed to personalize GPT-Live's opening. */
   async getLiveCallerContext(cli: string): Promise<{ greeting: string; callerKnown: boolean }> {
     const normalizedCli = normalizeAustralianPhone(cli || '');
     const profile = normalizedCli
       ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
       : null;
+
     if (profile?.customer) {
       const name = profile.customer.preferred_name || profile.customer.customer_name;
       return {
         callerKnown: true,
-        greeting: `Purnell Motors, Blakehurst. This number is registered to ${name}. Am I speaking with ${name}? How can I help you with your vehicle today?`,
+        greeting: `Hello ${name}, Purnell Motors, Blakehurst. How can I help you with your vehicle today?`,
       };
     }
+
     return {
       callerKnown: false,
-      greeting: 'Hello, this is Purnell Motors in Blakehurst. We can help with vehicle servicing and repairs, genuine parts, vehicle sales, and test drives. What can I help you with today?',
+      greeting: 'Hello, you have reached Purnell Motors in Blakehurst. Our voice service is available to registered customers. May I have your full name and vehicle registration so I can verify your account?',
     };
   }
 
-  /**
-   * Helper to format verified customer context for OpenAI system prompt injection
-   */
-  formatCustomerContextForPrompt(
-    profile?: FullCustomerProfile | null,
-    cli?: string,
-  ): string {
-    const spokenCli = formatPhoneForSpeech(cli || '');
-    if (!profile || !profile.customer) {
+  private formatCustomerContext(profile: FullCustomerProfile | null, cli: string): string {
+    const spokenCli = formatPhoneForSpeech(cli);
+    if (!profile?.customer) {
       return [
         'CALLER IDENTIFICATION STATUS: Unidentified / Ambiguous',
         `INCOMING PHONE (CLI): ${cli || 'Unknown'} (Spoken: "${spokenCli}")`,
         'OPERATIONAL INSTRUCTIONS FOR UNIDENTIFIED CALLER:',
-        '1. Do not disclose, confirm, deny, or repeat any customer name, registration, vehicle, booking, repair order, or other personal data while the caller is unverified.',
-        '2. Once the caller provides both a full name and registration plate, use the "verifyPentanaCustomer" tool so both factors must resolve to the same CRM record. Do not use separate "lookupPentanaCustomer" calls to verify an unknown or third-party caller.',
-        '3. Only use returned customer data if the verification result is verified: true. If verification fails, say only that the details could not be verified and offer a message or transfer without revealing which detail matched.',
-        '4. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
+        '1. This agent provides service only to registered customers. Until verification succeeds, do not provide dealership service, collect a service request, or access or disclose any customer record.',
+        '2. Ask for the caller full name and vehicle registration. Do not disclose, confirm, deny, or repeat any customer name, registration, vehicle, booking, repair order, or other personal data while unverified.',
+        '3. Once both details are supplied, use verifyPentanaCustomer so they must resolve to the same CRM record. Do not use lookupPentanaCustomer to verify an unknown or third-party caller.',
+        '4. Only use returned customer data if verification is true. If verification fails, say Purnell services registered customers only and offer a message for the team to help with registration. Never reveal which detail matched or any other record data.',
+        '5. Always speak phone numbers digit by digit with spaces and commas, and spell vehicle registration plates letter by letter. Never pronounce phone numbers as thousands or compound words.',
       ].join('\n');
     }
 
-    const c = profile.customer;
-    const vehicles = (c.vehicles || [])
-      .map(
-        (v) =>
-          `- ${v.year || ''} ${v.make || ''} ${v.model || ''} (Rego: ${v.rego || 'N/A'}, VIN: ${v.vin || 'N/A'}, Colour: ${v.colour || 'N/A'})`,
-      )
-      .join('\n  ');
-
-    const ros = (profile.repair_orders || [])
-      .map(
-        (ro) =>
-          `- RO #${ro.ro_number}: Rego ${ro.vehicle_rego} | Status: "${ro.status}" | Advisor: ${ro.advisor} | Drop-off: ${ro.drop_off_date} | Ready for Collection: ${ro.ready_for_collection ? 'YES' : 'NO'} | Awaiting Approval: ${ro.awaiting_approval ? 'YES' : 'NO'}`,
-      )
-      .join('\n  ');
-
-    const bookings = (profile.service_bookings || [])
-      .map(
-        (bk) =>
-          `- Booking on ${bk.date} at ${bk.time} (${bk.job_type}) with Advisor ${bk.advisor} (Rego: ${bk.vehicle_rego || 'On file'})`,
-      )
-      .join('\n  ');
-
-    const parts = (profile.parts_orders || [])
-      .map((pt) => {
-        const lineDesc =
-          pt.lines && pt.lines.length > 0
-            ? pt.lines.map((l) => `${l.description || 'Part'} (Status: ${l.status}, Arrived: ${l.arrived ? 'YES' : 'NO'})`).join(', ')
-            : 'Parts on order';
-        return `- Parts Order #${pt.parts_order_id} (RO: ${pt.ro_number || 'N/A'}, Rego: ${pt.vehicle_rego}): ${lineDesc}`;
-      })
-      .join('\n  ');
-
-    const contacts = profile.authorised_contacts
-      ? (profile.authorised_contacts.authorised_third_parties || [])
-          .map(
-            (ct) =>
-              `- ${ct.name} (${ct.relationship}): ${ct.mobile} [Authorised for: ${(ct.authorised_for || []).join(', ') || 'General'}]`,
-          )
-          .join('\n  ')
-      : 'None listed';
-
-    const primaryVehicle = c.vehicles && c.vehicles.length > 0 ? c.vehicles[0] : null;
+    const customer = profile.customer;
+    const vehicles = (customer.vehicles || []).map((vehicle) =>
+      `- ${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''} (Rego: ${vehicle.rego || 'N/A'}, VIN: ${vehicle.vin || 'N/A'}, Colour: ${vehicle.colour || 'N/A'})`,
+    ).join('\n  ');
+    const repairOrders = (profile.repair_orders || []).map((order) =>
+      `- RO #${order.ro_number}: Rego ${order.vehicle_rego} | Status: "${order.status}" | Advisor: ${order.advisor} | Drop-off: ${order.drop_off_date} | Ready for Collection: ${order.ready_for_collection ? 'YES' : 'NO'} | Awaiting Approval: ${order.awaiting_approval ? 'YES' : 'NO'}`,
+    ).join('\n  ');
+    const bookings = (profile.service_bookings || []).map((booking) =>
+      `- ${booking.date} at ${booking.time} (${booking.job_type}), Advisor ${booking.advisor}, Rego ${booking.vehicle_rego || 'On file'}`,
+    ).join('\n  ');
+    const parts = (profile.parts_orders || []).map((order) => {
+      const lines = order.lines?.map((line) =>
+        `${line.description || 'Part'} (Status: ${line.status}, Arrived: ${line.arrived ? 'YES' : 'NO'})`,
+      ).join(', ');
+      return `- Order #${order.parts_order_id} (RO: ${order.ro_number || 'N/A'}, Rego: ${order.vehicle_rego}): ${lines || 'Parts on order'}`;
+    }).join('\n  ');
+    const contacts = (profile.authorised_contacts?.authorised_third_parties || []).map((contact) =>
+      `- ${contact.name} (${contact.relationship}): ${contact.mobile} [Authorised for: ${(contact.authorised_for || []).join(', ') || 'General'}]`,
+    ).join('\n  ') || 'None listed';
+    const primaryVehicle = customer.vehicles?.[0];
 
     return [
       'CALLER IDENTIFICATION STATUS: VERIFIED / HIGH CONFIDENCE',
-      `CUSTOMER ID: ${c.customer_id}`,
-      `CUSTOMER NAME: ${c.customer_name} (Preferred: ${c.preferred_name || c.customer_name})`,
-      `MOBILE: ${c.mobile || 'N/A'} | LANDLINE: ${c.landline || 'N/A'}`,
+      `CUSTOMER ID: ${customer.customer_id}`,
+      `CUSTOMER NAME: ${customer.customer_name} (Preferred: ${customer.preferred_name || customer.customer_name})`,
+      `MOBILE: ${customer.mobile || 'N/A'} | LANDLINE: ${customer.landline || 'N/A'}`,
       `ASSIGNED SERVICE ADVISOR: ${primaryVehicle?.assigned_advisor || 'Service Team'}`,
       `ASSIGNED SALES CONSULTANT: ${primaryVehicle?.assigned_sales || 'Sales Team'}`,
       `REGISTERED VEHICLES:\n  ${vehicles || 'None listed'}`,
-      `OPEN REPAIR ORDERS (RO):\n  ${ros || 'No open repair orders'}`,
+      `OPEN REPAIR ORDERS:\n  ${repairOrders || 'No open repair orders'}`,
       `UPCOMING SERVICE BOOKINGS:\n  ${bookings || 'No upcoming bookings'}`,
       `PARTS ORDERS:\n  ${parts || 'No parts orders on file'}`,
       `AUTHORISED CONTACTS:\n  ${contacts}`,
       'OPERATIONAL INSTRUCTIONS:',
-      '1. You already have this client verified in CRM memory across all turns. NEVER lose or forget this context.',
-      '2. Answer inquiries about vehicle status, service bookings, parts, and advisors directly using the above data.',
-      '3. SPEAKING NUMBERS & REGO INSTRUCTIONS (MANDATORY): Always speak phone numbers digit-by-digit with spaces and commas (e.g. "0 4 1 2, 0 0 0, 0 0 6"). Always spell vehicle registration plates letter-by-letter with spaces (e.g. "C F 6 2 Z Z"). Never pronounce phone numbers as thousands or compound words.',
-      '4. Be natural, concise, and professional. Confirm name and clarify requests without reciting the whole database at once.',
+      '1. This client is verified in CRM context. Use this information to answer questions directly; retain this context across turns.',
+      '2. Answer inquiries about vehicle status, service bookings, parts, and advisors from the available customer data.',
+      '3. Always speak phone numbers digit by digit with spaces and commas, and spell vehicle registration plates letter by letter. Never pronounce phone numbers as thousands or compound words.',
+      '4. Be natural, concise, and professional. Confirm names and clarify requests without reciting the whole database at once.',
     ].join('\n');
   }
 
-  /**
-   * Initialize a voice agent streaming session for a connected WebSocket client
-   */
-  async createSession(
-    sessionId: string,
-    callbacks: {
-      onTranscript: (transcript: string, isFinal: boolean) => void;
-      onAiReply: (text: string, toolLogs?: string[]) => void;
-      onAudioChunk: (chunk: Buffer) => void;
-      onBargeIn: () => void;
-    },
-  ): Promise<VoiceAgentSession> {
-    const session: VoiceAgentSession = {
-      sessionId,
-      history: [],
-      deepgramSession: null,
-      isSpeaking: false,
-      activeAbortController: null,
-      currentTurnId: 0,
-      lastSpeechTime: Date.now(),
-      callbacks,
-    };
-
-    // Initialize Deepgram live STT session
-    session.deepgramSession =
-      await this.deepgramService.createLiveTranscriptionSession({
-        onTranscript: (transcript: string, isFinal: boolean) => {
-          callbacks.onTranscript(transcript, isFinal);
-
-          // If user is actively speaking while agent was speaking, interrupt immediately
-          if (session.isSpeaking) {
-            this.handleBargeIn(session, callbacks.onBargeIn);
-          }
-
-          if (isFinal && transcript.trim().length > 0) {
-            void this.processUserSpeech(session, transcript, callbacks);
-          }
-        },
-        onSpeechStarted: () => {
-          // Immediate interruption as soon as user starts speaking
-          if (session.isSpeaking) {
-            this.handleBargeIn(session, callbacks.onBargeIn);
-          }
-        },
-        onError: (err: unknown) => {
-          this.logger.error(`Session ${sessionId} STT error:`, err);
-        },
-        onClose: () => {
-          this.logger.log(`Session ${sessionId} STT closed`);
-        },
-      });
-
-    this.activeSessions.set(sessionId, session);
-    return session;
-  }
-
-  /**
-   * Helper to format and output structured latency breakdown logs
-   */
-  private logLatencyBreakdown(timings: {
-    title: string;
-    contextInfo: string;
-    userInput?: string;
-    dbLookupMs: number;
-    llmTotalMs?: number;
-    llmIterations?: number;
-    llmCallsMs?: number[];
-    toolCalls?: { name: string; durationMs: number }[];
-    sanitizationMs?: number;
-    ttsTtfbMs?: number;
-    ttsTtfcMs?: number;
-    ttsTotalMs?: number;
-    timeToFirstAudioMs?: number;
-    totalMs: number;
-  }) {
-    const lines: string[] = [
-      `\n[VoiceAgent] ┌────────────────────────── RESPONSE TIME BREAKDOWN ──────────────────────────`,
-      `[VoiceAgent] │ Context: ${timings.title} | ${timings.contextInfo}`,
-    ];
-
-    if (timings.userInput) {
-      const truncated =
-        timings.userInput.length > 70
-          ? timings.userInput.substring(0, 67) + '...'
-          : timings.userInput;
-      lines.push(`[VoiceAgent] │ Input: "${truncated}"`);
-    }
-
-    lines.push(`[VoiceAgent] ├─────────────────────────────────────────────────────────────────────────────`);
-    lines.push(`[VoiceAgent] │ ⏱️ CRM / DB Profile Lookup:       ${timings.dbLookupMs} ms`);
-
-    if (timings.llmTotalMs !== undefined) {
-      let llmDetail = `${timings.llmTotalMs} ms`;
-      const tools = timings.toolCalls || [];
-      if (tools.length > 0) {
-        const toolsDesc = tools
-          .map((t) => `${t.name} [${t.durationMs}ms]`)
-          .join(', ');
-        llmDetail += ` (${timings.llmIterations || 1} LLM call${(timings.llmIterations || 1) > 1 ? 's' : ''}, Tools: ${toolsDesc})`;
-      } else if (timings.llmIterations && timings.llmIterations > 1) {
-        llmDetail += ` (${timings.llmIterations} LLM calls)`;
-      }
-      lines.push(`[VoiceAgent] │ ⏱️ OpenAI LLM Reasoning:          ${llmDetail}`);
-    }
-
-    if (timings.sanitizationMs !== undefined) {
-      lines.push(`[VoiceAgent] │ ⏱️ Speech Text Sanitization:      ${timings.sanitizationMs} ms`);
-    }
-
-    if (timings.ttsTtfcMs !== undefined && timings.ttsTotalMs !== undefined) {
-      lines.push(`[VoiceAgent] │ ⏱️ ElevenLabs TTS Stream:`);
-      lines.push(`[VoiceAgent] │    ├─ Time to First Chunk (TTFC): ${timings.ttsTtfcMs} ms`);
-      lines.push(`[VoiceAgent] │    └─ Full Stream Duration:       ${timings.ttsTotalMs} ms`);
-    } else if (timings.ttsTotalMs !== undefined) {
-      lines.push(`[VoiceAgent] │ ⏱️ ElevenLabs TTS Generation:     ${timings.ttsTotalMs} ms`);
-    }
-
-    lines.push(`[VoiceAgent] ├─────────────────────────────────────────────────────────────────────────────`);
-    if (timings.timeToFirstAudioMs !== undefined) {
-      lines.push(`[VoiceAgent] │ 🚀 TIME TO FIRST AUDIO (TTFA):    ${timings.timeToFirstAudioMs} ms (caller hears agent audio)`);
-      lines.push(`[VoiceAgent] │ 🏁 TOTAL TURN PIPELINE TIME:      ${timings.totalMs} ms`);
-    } else {
-      lines.push(`[VoiceAgent] │ 🚀 TOTAL RESPONSE LATENCY:        ${timings.totalMs} ms`);
-    }
-    lines.push(`[VoiceAgent] └─────────────────────────────────────────────────────────────────────────────\n`);
-
-    this.logger.log(lines.join('\n'));
-  }
-
-  /**
-   * Triggers initial backend voice agent greeting & audio stream for a new session
-   */
-  async sendInitialGreeting(
-    sessionId: string,
-    cli: string,
-    callbacks: {
-      onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
-      onAudioChunk: (chunk: Buffer) => void;
-    },
-  ): Promise<void> {
-    const greetingStart = Date.now();
-    const session = this.activeSessions.get(sessionId);
-    const normalizedCli = normalizeAustralianPhone(cli || '');
-    
-    // Lookup customer profile in MongoDB Atlas
-    const dbStart = Date.now();
-    const profile = normalizedCli
-      ? await this.customerDatabaseService.getFullCustomerProfile(
-          normalizedCli,
-        )
-      : null;
-    const dbLookupMs = Date.now() - dbStart;
-
-    if (session) {
-      session.cli = normalizedCli;
-      session.customerProfile = profile;
-    }
-
-    let greetingText = '';
-    if (profile && profile.customer) {
-      const c = profile.customer;
-      const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I can see from the number you called from that you're registered with us as ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
-    } else {
-      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?`;
-    }
-
-    if (session) {
-      session.history.push({ role: 'assistant', content: greetingText });
-    }
-
-    let ttsTtfcMs: number | undefined;
-    let ttsTotalMs: number | undefined;
-    let timeToFirstAudioMs: number | undefined;
-
-    try {
-      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const turnId = session ? ++session.currentTurnId : 1;
-        const abortCtrl = new AbortController();
-        if (session) {
-          session.activeAbortController = abortCtrl;
-          session.isSpeaking = true;
-        }
-
-        const ttsStart = Date.now();
-        const ttsText = sanitizeTextForSpeech(greetingText);
-        const streamResult = await this.elevenLabsService.streamSpeech(
-          ttsText,
-          (chunk) => {
-            if (!abortCtrl.signal.aborted) {
-              callbacks.onAudioChunk(chunk);
-            }
-          },
-          abortCtrl.signal,
-          (ttfc) => {
-            ttsTtfcMs = ttfc;
-            timeToFirstAudioMs = Date.now() - greetingStart;
-          },
-        );
-
-        ttsTotalMs = streamResult.totalDurationMs;
-        if (!ttsTtfcMs) {
-          ttsTtfcMs = streamResult.ttfcMs;
-          timeToFirstAudioMs = Date.now() - greetingStart;
-        }
-
-        if (session && session.currentTurnId === turnId) {
-          session.isSpeaking = false;
-          session.activeAbortController = null;
-        }
-      }
-    } catch (err) {
-      this.logger.warn(`Initial greeting TTS failed: ${String(err)}`);
-    }
-
-    const totalMs = Date.now() - greetingStart;
-    this.logLatencyBreakdown({
-      title: 'Initial Greeting (Stream)',
-      contextInfo: `Session: ${sessionId} | CLI: "${cli || 'Anonymous'}"`,
-      dbLookupMs,
-      ttsTtfcMs,
-      ttsTotalMs,
-      timeToFirstAudioMs,
-      totalMs,
-    });
-
-    callbacks.onAiReply(greetingText, [], {
-      dbLookupMs,
-      ttsTtfcMs,
-      ttsTotalMs,
-      timeToFirstAudioMs,
-      totalMs,
-    });
-  }
-
-  /**
-   * Generates initial greeting with customer lookup and ElevenLabs TTS audio for HTTP/REST sessions
-   */
-  async generateInitialGreeting(cli: string): Promise<{
-    text: string;
-    audioBuffer?: string;
-    customer?: any;
-    timings?: any;
-  }> {
-    const greetingStart = Date.now();
-    const normalizedCli = normalizeAustralianPhone(cli || '');
-
-    const dbStart = Date.now();
-    const profile = normalizedCli
-      ? await this.customerDatabaseService.getFullCustomerProfile(
-          normalizedCli,
-        )
-      : null;
-    const dbLookupMs = Date.now() - dbStart;
-
-    let greetingText = '';
-    if (profile && profile.customer) {
-      const c = profile.customer;
-      const preferred = c.preferred_name || c.customer_name;
-      greetingText = `Purnell Motors, Blakehurst. I can see from the number you called from that you're registered with us as ${c.customer_name}. Am I speaking with ${preferred} today, and how may I assist you with your vehicle?`;
-    } else {
-      greetingText = `Good morning, Purnell Motors, Blakehurst. May I have your name and vehicle registration plate so I can pull up your file, and how may I assist you today?`;
-    }
-
-    let audioBase64: string | undefined;
-    let ttsTotalMs: number | undefined;
-    try {
-      if (VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const ttsStart = Date.now();
-        const ttsText = sanitizeTextForSpeech(greetingText);
-        const pcmBuffer =
-          await this.elevenLabsService.generateSpeechBuffer(ttsText);
-        ttsTotalMs = Date.now() - ttsStart;
-        audioBase64 = pcmBuffer.toString('base64');
-      }
-    } catch (err: unknown) {
-      this.logger.warn(
-        `TTS generation failed for initial greeting: ${String(err)}`,
-      );
-    }
-
-    const totalMs = Date.now() - greetingStart;
-    this.logLatencyBreakdown({
-      title: 'Initial Greeting (REST)',
-      contextInfo: `CLI: "${cli || 'Anonymous'}"`,
-      dbLookupMs,
-      ttsTotalMs,
-      totalMs,
-    });
-
-    return {
-      text: greetingText,
-      audioBuffer: audioBase64,
-      customer: profile,
-      timings: {
-        dbLookupMs,
-        ttsTotalMs,
-        totalMs,
-      },
-    };
-  }
-
-  /**
-   * Immediately aborts active voice agent speech when the caller interrupts
-   */
-  private handleBargeIn(
-    session: VoiceAgentSession,
-    onBargeInCallback: () => void,
-  ) {
-    this.logger.log(
-      `[Barge-In] Interrupting voice agent speech for session ${session.sessionId} (Turn #${session.currentTurnId})`,
-    );
-
-    // Cancel active ElevenLabs HTTP stream
-    if (session.activeAbortController) {
-      session.activeAbortController.abort();
-      session.activeAbortController = null;
-    }
-
-    session.isSpeaking = false;
-    session.currentTurnId++; // Invalidate any buffered audio chunks in flight
-
-    // Notify client over WebSocket to immediately mute/flush speaker buffer
-    onBargeInCallback();
-  }
-
-  /**
-   * Manually abort active voice agent speech for a session (e.g. client barge-in)
-   */
-  interruptSession(sessionId: string) {
-    const session = this.activeSessions.get(sessionId);
-    if (session) {
-      this.logger.log(`[Manual Barge-In] Aborting speech for session ${sessionId}`);
-      if (session.activeAbortController) {
-        session.activeAbortController.abort();
-        session.activeAbortController = null;
-      }
-      session.isSpeaking = false;
-      session.currentTurnId++;
-    }
-  }
-
-  /**
-   * Return session by ID
-   */
-  getSession(sessionId: string): VoiceAgentSession | undefined {
-    return this.activeSessions.get(sessionId);
-  }
-
-  /**
-   * Process incoming user text input with real-time sentence-by-sentence TTS streaming
-   */
-  async processUserTextTurn(
-    sessionId: string,
-    userText: string,
-    clientHistory?: ConversationTurn[],
-    cli?: string,
-  ): Promise<void> {
-    const session = this.activeSessions.get(sessionId);
-    if (!session || !session.callbacks) {
-      this.logger.warn(
-        `Session ${sessionId} not found or has no callbacks; skipping streaming text turn`,
-      );
-      return;
-    }
-
-    if (cli && !session.cli) {
-      session.cli = normalizeAustralianPhone(cli);
-    }
-
-    if (!session.customerProfile && session.cli) {
-      session.customerProfile =
-        await this.customerDatabaseService.getFullCustomerProfile(session.cli);
-    }
-
-    if (
-      session.history.length === 0 &&
-      clientHistory &&
-      clientHistory.length > 0
-    ) {
-      const priorHistory = clientHistory.filter(
-        (m, idx) =>
-          !(
-            idx === clientHistory.length - 1 &&
-            m.role === 'user' &&
-            m.content === userText
-          ),
-      );
-      session.history = [...priorHistory];
-    }
-
-    await this.processUserSpeech(session, userText, session.callbacks);
-  }
-
-  /**
-   * Process incoming user audio chunk from WebSocket
-   */
-  handleAudioChunk(
-    sessionId: string,
-    chunk: Buffer | ArrayBuffer | Uint8Array,
-  ) {
-    const session = this.activeSessions.get(sessionId);
-    if (session?.deepgramSession) {
-      session.deepgramSession.sendAudio(chunk);
-    }
-  }
-
-  /**
-   * Process finalized user speech transcript
-   */
-  private async processUserSpeech(
-    session: VoiceAgentSession,
-    userText: string,
-    callbacks: {
-      onAiReply: (text: string, toolLogs?: string[], timings?: any) => void;
-      onAudioChunk: (chunk: Buffer) => void;
-      onBargeIn: () => void;
-    },
-  ): Promise<void> {
-    const turnStart = Date.now();
-    session.history.push({ role: 'user', content: userText });
-
-    // If caller was unidentified, attempt lookup from speech
-    const dbStart = Date.now();
-    let dbLookupMs = 0;
-    if (!session.customerProfile) {
-      const foundProfile =
-        await this.customerDatabaseService.getFullCustomerProfile(userText);
-      dbLookupMs = Date.now() - dbStart;
-      if (foundProfile) {
-        session.customerProfile = foundProfile;
-      }
-    } else {
-      dbLookupMs = Date.now() - dbStart;
-    }
-
-    // Build messages from history
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      session.history.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-    // Inject verified caller context into OpenAI system prompt
-    const customerContext = this.formatCustomerContextForPrompt(
-      session.customerProfile,
-      session.cli,
-    );
-
-    try {
-      // Start new TTS turn with dedicated AbortController
-      const thisTurnId = ++session.currentTurnId;
-      const abortController = new AbortController();
-      session.activeAbortController = abortController;
-      session.isSpeaking = true;
-      session.lastSpeechTime = Date.now();
-
-      let ttsTtfcMs: number | undefined;
-      let timeToFirstAudioMs: number | undefined;
-      let totalSanitizationMs = 0;
-      const ttsStart = Date.now();
-
-      // Sequential sentence TTS promise queue for instant time-to-first-audio
-      let ttsQueue = Promise.resolve();
-
-      const onSentence = (sentence: string) => {
-        if (abortController.signal.aborted || session.currentTurnId !== thisTurnId) return;
-
-        const sanitizeStart = Date.now();
-        const ttsText = sanitizeTextForSpeech(sentence);
-        totalSanitizationMs += Date.now() - sanitizeStart;
-
-        if (!ttsText.trim()) return;
-
-        ttsQueue = ttsQueue.then(async () => {
-          if (abortController.signal.aborted || session.currentTurnId !== thisTurnId) return;
-          try {
-            await this.elevenLabsService.streamSpeech(
-              ttsText,
-              (chunk) => {
-                if (
-                  session.isSpeaking &&
-                  session.currentTurnId === thisTurnId &&
-                  !abortController.signal.aborted
-                ) {
-                  callbacks.onAudioChunk(chunk);
-                }
-              },
-              abortController.signal,
-              (ttfc) => {
-                if (!ttsTtfcMs) {
-                  ttsTtfcMs = ttfc;
-                  timeToFirstAudioMs = Date.now() - turnStart;
-                }
-              },
-            );
-          } catch (err: unknown) {
-            if (!abortController.signal.aborted) {
-              this.logger.warn(`Sentence TTS streaming error: ${String(err)}`);
-            }
-          }
-        });
-      };
-
-      const llmStart = Date.now();
-      const { text: aiReply, toolLogs, timings: openAiTimings } =
-        await this.openAiService.generateResponse(
-          messages,
-          customerContext,
-          onSentence,
-          abortController.signal,
-        );
-      const llmTotalMs = Date.now() - llmStart;
-      session.history.push({ role: 'assistant', content: aiReply });
-
-      // Wait for all streamed sentences to finish synthesis
-      await ttsQueue;
-
-      const ttsTotalMs = Date.now() - ttsStart;
-      if (!timeToFirstAudioMs) {
-        timeToFirstAudioMs = ttsTtfcMs ? ttsTtfcMs + (openAiTimings?.llmCallsMs?.[0] || 300) : Date.now() - turnStart;
-      }
-
-      if (session.currentTurnId === thisTurnId) {
-        session.isSpeaking = false;
-        session.activeAbortController = null;
-      }
-
-      const totalMs = Date.now() - turnStart;
-      const turnTimings = {
-        dbLookupMs,
-        llmTotalMs,
-        llmIterations: openAiTimings?.iterations,
-        llmCallsMs: openAiTimings?.llmCallsMs,
-        toolCalls: openAiTimings?.toolCalls,
-        sanitizationMs: totalSanitizationMs,
-        ttsTtfcMs: ttsTtfcMs || 150,
-        ttsTotalMs,
-        timeToFirstAudioMs,
-        totalMs,
-      };
-
-      this.logLatencyBreakdown({
-        title: `Live Voice Turn #${thisTurnId} (Streamed)`,
-        contextInfo: `Session: ${session.sessionId} | CLI: "${session.cli || 'Anonymous'}"`,
-        userInput: userText,
-        ...turnTimings,
-      });
-
-      callbacks.onAiReply(aiReply, toolLogs, turnTimings);
-    } catch (error: unknown) {
-      const totalMs = Date.now() - turnStart;
-      this.logger.error(
-        `Error processing speech turn for session ${session.sessionId} after ${totalMs}ms:`,
-        error,
-      );
-      session.isSpeaking = false;
-      session.activeAbortController = null;
-    }
-  }
-
-  /**
-   * Process a text message directly (for REST testing)
-   */
   async processTextMessage(
     userText: string,
     history: ConversationTurn[] = [],
-    cli: string = '',
-    generateAudio = true,
+    cli = '',
   ): Promise<{
     text: string;
     toolLogs?: string[];
-    audioBuffer?: string;
-    timings?: any;
+    timings: LiveDelegationTimings;
   }> {
-    const requestStart = Date.now();
-    const normalizedCli = normalizeAustralianPhone(cli || '');
-    
-    // 1. Resolve profile by CLI or userText
-    const dbStart = Date.now();
-    let profile = normalizedCli
-      ? await this.customerDatabaseService.getFullCustomerProfile(
-          normalizedCli,
-        )
+    const startedAt = Date.now();
+    const normalizedCli = normalizeAustralianPhone(cli);
+    const lookupStartedAt = Date.now();
+    const profile = normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
       : null;
-
-    if (!profile && userText) {
-      profile = await this.customerDatabaseService.getFullCustomerProfile(userText);
+    const dbLookupMs = Date.now() - lookupStartedAt;
+    const customerContext = this.formatCustomerContext(profile, normalizedCli);
+    const messages = [...history];
+    const lastMessage = messages.at(-1);
+    if (lastMessage?.role !== 'user' || lastMessage.content !== userText) {
+      messages.push({ role: 'user', content: userText });
     }
-    const dbLookupMs = Date.now() - dbStart;
-
-    const customerContext = this.formatCustomerContextForPrompt(
-      profile,
-      normalizedCli,
-    );
-
-    // Build message history without duplicate user turns
-    const fullHistory: ConversationTurn[] = [...history];
-    const lastMsg = fullHistory[fullHistory.length - 1];
-    if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== userText) {
-      fullHistory.push({ role: 'user', content: userText });
-    }
-
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      fullHistory.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-    const llmStart = Date.now();
+    const llmStartedAt = Date.now();
     const result = await this.openAiService.generateResponse(
-      messages,
+      messages.map(({ role, content }) => ({ role, content })),
       customerContext,
+      profile?.customer?.customer_id,
     );
-    const llmTotalMs = Date.now() - llmStart;
-
-    let audioBase64: string | undefined;
-    let ttsTotalMs: number | undefined;
-    try {
-      if (generateAudio && VOICE_AGENT_CONFIG.elevenlabs.apiKey) {
-        const ttsStart = Date.now();
-        const ttsText = sanitizeTextForSpeech(result.text);
-        const pcmBuffer = await this.elevenLabsService.generateSpeechBuffer(
-          ttsText,
-        );
-        ttsTotalMs = Date.now() - ttsStart;
-        audioBase64 = pcmBuffer.toString('base64');
-      }
-    } catch (err: unknown) {
-      this.logger.warn(
-        `TTS generation skipped in test text message: ${String(err)}`,
-      );
-    }
-
-    const totalMs = Date.now() - requestStart;
-    const responseTimings = {
+    const timings = {
       dbLookupMs,
-      llmTotalMs,
+      llmTotalMs: Date.now() - llmStartedAt,
       llmIterations: result.timings?.iterations,
       llmCallsMs: result.timings?.llmCallsMs,
       toolCalls: result.timings?.toolCalls,
-      ttsTotalMs,
-      totalMs,
+      totalMs: Date.now() - startedAt,
     };
 
-    this.logLatencyBreakdown({
-      title: 'Text Message Processing',
-      contextInfo: `CLI: "${normalizedCli || 'Anonymous'}"`,
-      userInput: userText,
-      ...responseTimings,
-    });
-
-    return {
-      text: result.text,
-      toolLogs: result.toolLogs,
-      audioBuffer: audioBase64,
-      timings: responseTimings,
-    };
-  }
-
-  /**
-   * End and cleanup session
-   */
-  async closeSession(sessionId: string): Promise<void> {
-    const session = this.activeSessions.get(sessionId);
-    if (session) {
-      if (session.activeAbortController) {
-        session.activeAbortController.abort();
-      }
-      if (session.deepgramSession) {
-        await session.deepgramSession.finish();
-      }
-      this.activeSessions.delete(sessionId);
-      this.logger.log(`Session ${sessionId} destroyed`);
-    }
-  }
-
-  /**
-   * Pentana Service helpers
-   */
-  lookupCustomer(query: string): PentanaCustomer | null {
-    return this.pentanaService.searchCustomer(query);
-  }
-
-  checkStaff(name: string): StaffMember | null {
-    return this.pentanaService.checkStaff(name);
-  }
-
-  getAppointmentSlots(): AppointmentSlot[] {
-    return this.pentanaService.getAppointmentSlots();
-  }
-
-  createHandoff(record: Partial<HandoffRecord>): string {
-    return this.pentanaService.formatHandoffRecord(record);
+    this.logger.log(
+      `Live delegation processed in ${timings.totalMs}ms (tools: ${timings.toolCalls?.length || 0}).`,
+    );
+    return { text: result.text, toolLogs: result.toolLogs, timings };
   }
 }
