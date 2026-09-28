@@ -126,16 +126,36 @@ class LiveVoiceAgent {
 
   waitForIceGathering(peer) {
     if (peer.iceGatheringState === 'complete') return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timed out preparing the browser voice connection.')), 10000);
-      const onStateChange = () => {
-        if (peer.iceGatheringState !== 'complete') return;
-        clearTimeout(timeout);
+    return new Promise((resolve) => {
+      let resolved = false;
+      let candidateDebounceTimer = null;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(maxTimeout);
+        if (candidateDebounceTimer) clearTimeout(candidateDebounceTimer);
         peer.removeEventListener('icegatheringstatechange', onStateChange);
+        peer.removeEventListener('icecandidate', onCandidate);
         resolve();
       };
+
+      // Safety timeout: proceed within 500ms max so connection setup is not blocked
+      const maxTimeout = setTimeout(finish, 500);
+
+      const onStateChange = () => {
+        if (peer.iceGatheringState === 'complete') finish();
+      };
+
+      const onCandidate = (event) => {
+        // Once local candidates begin arriving, wait a brief 150ms buffer to bundle any sibling candidates, then proceed
+        if (event.candidate && !candidateDebounceTimer) {
+          candidateDebounceTimer = setTimeout(finish, 150);
+        }
+      };
+
       peer.addEventListener('icegatheringstatechange', onStateChange);
-      onStateChange();
+      peer.addEventListener('icecandidate', onCandidate);
     });
   }
 
