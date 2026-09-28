@@ -1,162 +1,91 @@
-# Voice agent workflow and improvement guide
+# GPT-Live voice agent architecture
 
-Reviewed: 2026-09-25
+This repository now uses OpenAI GPT-Live-1 for the voice conversation. The separate backend chat model handles dealership reasoning and calls CRM/business tools when GPT-Live delegates a request.
 
-This document describes the voice flows currently present in this repository, likely causes of unwanted interruptions and lag, and how the GPT-Live-1 mode connects to the existing dealership backend. It is implementation context for future coding agents.
+## Components
 
-## Available voice modes
+| Responsibility | Implementation |
+| --- | --- |
+| Browser UI and microphone | `public/index.html`, `public/app.js` |
+| Real-time audio transport | Browser WebRTC peer connection to GPT-Live-1 |
+| Voice model | `gpt-live-1`, configured in `src/openai/openai.service.ts` |
+| Backend reasoning | OpenAI Chat Completions, configured by `OPENAI_REASONING_MODEL` (defaults to `gpt-4o-mini`) |
+| Caller lookup and context | `VoiceAgentService` plus `CustomerDatabaseService` |
+| Business data tools | `OpenAiService`: customer verification/lookup, staff availability, appointment-slot query, handoff record |
 
-The web UI has a **Voice model** selector. Choose **Current pipeline** to use the existing Deepgram, OpenAI Chat Completions, and ElevenLabs flow. Choose **OpenAI GPT-Live-1** to use speech-to-speech over WebRTC. GPT-Live-1 generates the audio in that mode; the dealership backend still runs the existing OpenAI text agent and tools for business-data requests, without generating ElevenLabs audio.
+There is no Deepgram transcription, ElevenLabs speech generation, browser speech recognition, or NestJS voice WebSocket pipeline in this architecture. GPT-Live-1 owns live audio input and output. Backend delegation returns text to the Live session, which speaks it.
 
-The OpenAI API key stays on the server. The browser sends its WebRTC SDP offer to `POST /voice-agent/live/session`; the server creates a `gpt-live-1` session and returns the SDP answer. The browser microphone requests echo cancellation and noise suppression. On hang-up, it closes the peer connection and microphone tracks.
+## Call flow
 
-GPT-Live-1 uses client delegation. It answers ordinary conversational turns itself and asks the application to handle dealership and customer requests. The browser accumulates Live input transcript events, sends the request and conversation history to `POST /voice-agent/live/delegation`, and returns the backend result to Live with `session.commentary.append` so GPT-Live-1 speaks it. The backend path calls `processTextMessage` with audio generation disabled. It still applies existing customer lookup, prompt, and tool behavior.
+1. The browser requests microphone access and creates a WebRTC offer.
+2. It posts the SDP offer and caller number to `POST /voice-agent/live/session`.
+3. The server looks up the caller number and creates a `gpt-live-1` session with the matched or unknown-caller greeting instructions.
+4. After `session.started`, the browser appends an instruction for GPT-Live-1 to speak first. Caller audio remains active while the opening is spoken.
+5. GPT-Live-1 handles ordinary conversation. When dealership records or business actions are required, it creates a client delegation.
+6. The browser sends the transcript, conversation history, and caller number to `POST /voice-agent/live/delegation`.
+7. The backend chat model runs the existing prompt and tools, then the browser returns the result using `session.commentary.append` for GPT-Live-1 to speak.
+8. If the caller says goodbye, the browser waits for the assistant's farewell audio to finish, sends `session.close`, and waits for `session.closed` before releasing the connection.
 
-## Current implementation
-
-The browser demo uses browser speech recognition to turn microphone speech into text. The text travels over the NestJS WebSocket gateway to the voice-agent service. The backend uses Deepgram for live transcription/session events, OpenAI Chat Completions for the response, and ElevenLabs for generated speech audio.
-
-| Responsibility | Current implementation | Source |
-| --- | --- | --- |
-| Browser interface and microphone recognition | Web Speech API `SpeechRecognition` in the demo | [public/app.js](../public/app.js) |
-| WebSocket transport | NestJS gateway at `/voice` | [voice-agent.gateway.ts](../src/voice-agent/voice-agent.gateway.ts) |
-| Session orchestration and interruption handling | Voice-agent service | [voice-agent.service.ts](../src/voice-agent/voice-agent.service.ts) |
-| Server-side transcription connection | Deepgram live connection | [deepgram.service.ts](../src/deepgram/deepgram.service.ts) |
-| Model and voice configuration | Voice-agent config | [voice-agent.config.ts](../src/config/voice-agent.config.ts) |
-| LLM response generation | OpenAI Chat Completions; a Realtime session config helper is defined but is not used by this browser path | [openai.service.ts](../src/openai/openai.service.ts) |
-| Speech generation | ElevenLabs streaming TTS | [elevenlabs.service.ts](../src/elevenlabs/elevenlabs.service.ts) |
-
-There is no PSTN/SIP call integration visible in this repository. The current browser path primarily sends recognized text to the backend; do not assume the Deepgram connection is the browser microphone's only or authoritative transcription path.
-
-## Current conversation workflow
-
-1. The browser opens a WebSocket connection to `/voice` and starts browser speech recognition.
-2. Interim recognition results arrive while the caller is still speaking.
-3. If the UI considers the agent to be speaking, any non-empty interim text immediately stops the audio and sends a `stop_agent_speaking` event. This is the strongest code-level candidate for background/echo false interruptions.
-4. After a 650 ms silence timer, the browser sends the finalized user text as `text_input`.
-5. The gateway forwards the text to the voice-agent service.
-6. The service requests a response from OpenAI and sends generated speech from ElevenLabs back as audio chunks.
-7. The browser plays the chunks and updates speaking state.
-
-~~~mermaid
+```mermaid
 sequenceDiagram
     participant Caller
-    participant Browser as Browser demo (SpeechRecognition)
-    participant WS as NestJS /voice gateway
-    participant VA as Voice agent service
-    participant LLM as OpenAI Chat Completions
-    participant TTS as ElevenLabs
-    Caller->>Browser: microphone speech
-    Browser-->>Browser: interim and final recognized text
-    alt interim text while agent audio is playing
-        Browser->>Browser: stop audio immediately
-        Browser->>WS: stop_agent_speaking
-        WS->>VA: interrupt current response
-    end
-    Browser->>Browser: wait 650 ms after speech ends
-    Browser->>WS: text_input
-    WS->>VA: process user turn
-    VA->>LLM: generate answer
-    LLM-->>VA: answer text
-    VA->>TTS: stream speech synthesis
-    TTS-->>VA: audio chunks
-    VA-->>WS: audio chunks
-    WS-->>Browser: audio chunks
-    Browser-->>Caller: play agent response
-~~~
-
-## GPT-Live-1 workflow
-
-~~~mermaid
-sequenceDiagram
-    participant Caller
-    participant Browser as Web UI (WebRTC)
-    participant Server as NestJS API
-    participant Live as OpenAI GPT-Live-1
-    participant Agent as Existing OpenAI text agent and CRM tools
-    Caller->>Browser: microphone audio
-    Browser->>Server: POST SDP offer
-    Server->>Live: create gpt-live-1 WebRTC session
-    Live-->>Server: SDP answer
-    Server-->>Browser: SDP answer
-    Browser->>Live: negotiated audio and event channel
-    Live-->>Browser: speech and transcript events
-    Live-->>Browser: client delegation event
-    Browser->>Server: transcript, history, CLI
-    Server->>Agent: resolve customer context and run tools
-    Agent-->>Server: text result
-    Server-->>Browser: text result
+    participant Browser
+    participant Live as GPT-Live-1
+    participant API as NestJS API
+    participant Brain as Backend chat model
+    participant Tools as CRM and Pentana tools
+    Caller->>Browser: Start call and provide caller number
+    Browser->>API: SDP offer + caller number
+    API->>Tools: Look up caller by phone number
+    API->>Live: Create live audio session and caller greeting instructions
+    Live-->>Browser: SDP answer and session.started
+    Browser->>Live: Append speak-first greeting instruction
+    Live->>Caller: Proactive greeting and live conversation
+    Caller->>Live: Speech audio
+    Live->>Browser: Client delegation request
+    Browser->>API: Transcript + history + caller number
+    API->>Brain: Reason over request and available tools
+    Brain->>Tools: CRM/business lookup or handoff action
+    Tools-->>Brain: Tool result
+    Brain-->>API: Response text
+    API-->>Browser: Delegation result
     Browser->>Live: session.commentary.append
-    Live-->>Caller: speak result in native Live voice
-~~~
+    Live->>Caller: Spoken response
+    Caller->>Live: Goodbye
+    Live->>Caller: Farewell
+    Browser->>Live: session.close
+    Live-->>Browser: session.closed
+```
 
-## Why background noise can interrupt the agent
+## Available backend tools
 
-The browser's barge-in policy is aggressive: any non-empty interim recognized text while agent playback is active stops playback immediately. It does not appear to require a minimum duration, confidence score, or confirmation that the audio came from the caller rather than the speaker/room. Browser speech recognition can misrecognize background sounds or the agent's own audio as speech.
+- `verifyPentanaCustomer`: match caller-provided name and vehicle registration to one customer record.
+- `lookupPentanaCustomer`: retrieve customer, repair-order, parts, and booking data.
+- `checkStaffAvailability`: check a named staff member.
+- `queryAppointmentSlots`: return available service/test-drive slots; it does not reserve a slot.
+- `createHandoffRecord`: log a callback or staff handoff.
 
-The backend also has interruption callbacks in its Deepgram session. Review both paths together: a browser-side stop event can interrupt before backend thresholds matter, and Deepgram callbacks can independently trigger barge-in. The configured OpenAI VAD threshold is not used by this text-input browser flow. The Deepgram endpointing configuration should also be checked against the actual connection options being passed.
+The current backend does not create or confirm a service booking. The voice model must not tell callers that a booking is confirmed unless a booking tool is added and returns success.
 
-Relevant locations:
-- `public/app.js`: recognition result handler and interruption decision; 650 ms silence timer; outbound text input; audio stop behavior.
-- `src/voice-agent/voice-agent.gateway.ts`: `/voice` events and forwarding.
-- `src/voice-agent/voice-agent.service.ts`: Deepgram callbacks, barge-in cancellation, response generation and audio lifecycle.
-- `src/deepgram/deepgram.service.ts`: transcript and speech-start event callbacks and live connection options.
-- `src/config/voice-agent.config.ts`: OpenAI VAD threshold and Deepgram endpointing settings.
+## Caller identity
 
-## Recommended diagnosis and fixes
+The UI currently supplies a caller number for local testing; this repository does not include PSTN/SIP integration to obtain ANI automatically. The server passes only a greeting and a known/unknown flag into the Live session. The backend separately resolves CRM context when processing a delegated request. Known callers are asked to confirm their identity before the model discusses personal details. Unknown callers hear the business and service introduction before being asked what they need.
 
-Add structured timestamps for each turn: microphone/result event, final transcript, WebSocket send/receive, LLM request/first token, TTS request/first audio chunk, and browser first playback. Record interruption reason and source (browser interim result, Deepgram speech-start, explicit user action), plus transcript confidence/duration where available. Avoid logging raw audio or sensitive conversation content by default.
+## Debugging
 
-Tune barge-in as a stateful decision rather than a single interim-result check:
-- Do not interrupt on every interim recognition result. Require sustained speech or a final/confirmed transcript, and apply a short debounce.
-- While agent audio plays, use echo cancellation/noise suppression where supported; compare headphones as a diagnostic.
-- Add a short post-playback guard and suppress recognition matching recent agent output, while preserving an explicit user stop control.
-- Make the interrupt policy configurable so sensitivity can be tested without code edits.
-- Verify whether browser recognition and Deepgram are both acting as speech detectors. Choose a clear source of truth for each mode to avoid duplicate or contradictory turn detection.
-- Test with quiet background, steady noise, competing speech, and agent-speaker echo. Compare false interruption rate and genuine barge-in response time.
+Browser diagnostics appear in DevTools Console with the `[GPT-Live timestamp]` prefix. They include connection state, Live event types, transcript lengths, caller end-intent detection, delegation lifecycle, and session-close acknowledgments. They intentionally omit raw transcript content and caller numbers.
 
-For lag, measure each pipeline segment independently before tuning. The browser's 650 ms silence wait is a fixed part of perceived turn latency. Stream model output into TTS at safe phrase boundaries and start playback on the first audio chunk. Check network round trips, provider region, buffering, and whether generation is serialized. Keep interruption/cancellation responsive when a new confirmed user turn arrives.
+NestJS logs show Live session creation, delegation duration, and backend tool names/durations. A close attempt should show the outgoing `session.close` followed by `session.closed`. If the latter is absent, inspect the Live error events and browser connection state.
 
-## GPT-Live-1 implementation details
+## Configuration
 
-GPT-Live-1 is a selectable mode, separate from the current modular pipeline. Live uses OpenAI's speech-to-speech model for audio input/output and has its own session lifecycle, WebRTC transport, turn detection, and interruption behavior.
+- `OPENAI_API_KEY`: server-side OpenAI API key used to create the Live session and run backend reasoning.
+- `OPENAI_REASONING_MODEL`: backend chat model; defaults to `gpt-4o-mini`.
+- `MONGO_URI`: MongoDB connection string used by the customer database module.
 
-Implementation files:
-- `public/index.html` and `public/app.js`: voice mode selector, WebRTC setup, Live data channel events, transcript accumulation, delegated request/result, and resource cleanup.
-- `src/openai/openai.service.ts`: server-side `gpt-live-1` WebRTC session configuration; the chosen native voice is `quartz`.
-- `src/voice-agent/voice-agent.controller.ts`: session-creation and text-delegation HTTP routes.
-- `src/voice-agent/voice-agent.service.ts`: optional audio generation flag; current pipeline keeps ElevenLabs enabled, Live delegation disables it.
+## OpenAI references
 
-This repository currently shows a browser demo rather than a PSTN call stack. If calls eventually arrive over telephone, assess the documented SIP/provider path separately.
-
-## GPT-Live-1 with ElevenLabs
-
-ElevenLabs is not used in GPT-Live-1 mode yet. A future hybrid could use Live transcript output with ElevenLabs speech, but it would add a streaming boundary, alignment/cancellation work, and possible latency. Confirm API support and event semantics before implementation; do not assume a supported setting turns off Live audio while preserving the same interaction behavior.
-
-When implementing ElevenLabs in Live mode later, keep it as a separate option and measure latency end to end. Prototype transcript-to-TTS first and confirm output text arrives incrementally and reliably enough for natural speech.
-
-## Suggested implementation order
-
-1. Test both modes with ordinary questions and the same background-noise/echo setup.
-2. Check that a GPT-Live-1 dealership question reaches the server delegation endpoint and gets a spoken result.
-3. Compare interruption behavior and time-to-first-audio between modes.
-4. Add ElevenLabs to Live mode later only if the voice requirement justifies the extra path.
-
-## Official references
-
-OpenAI:
-- [Introducing GPT-Live-1 in the API](https://openai.com/index/introducing-gpt-live-1-in-the-api/)
-- [GPT-Live-1 model reference](https://developers.openai.com/api/docs/models/gpt-live-1)
-- [Live API guide](https://developers.openai.com/api/docs/guides/live)
-- [WebRTC browser connection guide](https://developers.openai.com/api/docs/guides/voice-webrtc)
-- [Live conversations](https://developers.openai.com/api/docs/guides/live-conversations)
-- [Delegate tasks from Live sessions](https://developers.openai.com/api/docs/guides/live-delegation)
-- [Live API migration guide](https://developers.openai.com/api/docs/guides/live-migration)
-- [Voice with SIP](https://developers.openai.com/api/docs/guides/voice-sip)
-- [Server controls for Live sessions](https://developers.openai.com/api/docs/guides/voice-server-controls?api=live)
-
-ElevenLabs:
-- [Realtime TTS over WebSockets](https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/realtime-tts)
-- [Latency optimization](https://elevenlabs.io/docs/eleven-api/guides/how-to/best-practices/latency-optimization)
-
-Re-check provider documentation before implementation because model names, transport details, event schemas, and pricing can change.
+- [GPT-Live conversations and session lifecycle](https://developers.openai.com/api/docs/guides/live-conversations)
+- [GPT-Live delegation and tools](https://developers.openai.com/api/docs/guides/live-delegation)
+- [GPT-Live prompting](https://developers.openai.com/api/docs/guides/live-prompting)
+- [WebRTC connection guide](https://developers.openai.com/api/docs/guides/voice-webrtc)

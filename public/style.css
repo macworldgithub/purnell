@@ -92,17 +92,6 @@ body {
   border-color: var(--primary-color);
 }
 
-.voice-model-select {
-  width: 100%;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  cursor: pointer;
-}
-
-.voice-model-select:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
 .cli-preview {
   font-size: 12px;
   color: var(--text-muted);
@@ -194,7 +183,7 @@ body {
 
 /* Transcript Section */
 .transcript-section {
-  display: none !important;
+  display: flex;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 16px;
@@ -258,7 +247,7 @@ body {
 }
 
 .transcript-entry {
-  display: none !important;
+  display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 10px 14px;

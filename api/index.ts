@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
-import { WsAdapter } from '@nestjs/platform-ws';
 import express, { Express, Request, Response } from 'express';
 import { AppModule } from '../src/app.module';
 
@@ -30,8 +29,6 @@ async function bootstrap(): Promise<Express> {
       AppModule,
       new ExpressAdapter(server),
     );
-    // Explicitly use WsAdapter so NestJS doesn't fail trying to require platform-socket.io
-    app.useWebSocketAdapter(new WsAdapter(app));
     app.enableCors({
       origin: '*',
       methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
