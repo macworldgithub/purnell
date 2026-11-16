@@ -11,12 +11,10 @@ import { PartsOrderSchema } from '../schemas/parts-order.schema';
 import { ServiceBookingSchema } from '../schemas/service-booking.schema';
 import { AuthorisedContactSchema } from '../schemas/authorised-contact.schema';
 
-const mongoUri =
-  process.env.MONGO_URI ||
-  'mongodb+srv://salman:4lanHyMRdCrtXDJ7@sign365.nglnioh.mongodb.net/Purnell_Pentana_VoiceAgent?retryWrites=true&w=majority';
+const mongoUri = process.env.MONGO_URI;
 
 async function seed() {
-  console.log('Connecting to MongoDB at:', mongoUri);
+  if (!mongoUri) throw new Error('MONGO_URI is required to seed mock data.');
   await mongoose.connect(mongoUri);
 
   const CustomerModel = mongoose.model('Customer', CustomerSchema);
