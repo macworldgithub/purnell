@@ -31,7 +31,7 @@ export class AppController {
     if (progress?.runId) {
       try {
         const candidate = JSON.parse(await readFile(join(folder, 'published-progress.json'), 'utf8'));
-        if (candidate.runId === progress.runId) published = candidate;
+        if (candidate.runId === progress.runId && candidate.invocationId === progress.invocationId) published = candidate;
       } catch { /* A new run may not have published its first stage yet. */ }
     }
     let schedule: any = null;
@@ -54,7 +54,9 @@ export class AppController {
       lastRun: progress?.startedAt ?? last?.startedAt ?? schedule?.lastRun ?? last?.runId?.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, 'T$1:$2:$3.$4Z') ?? null,
       nextRun: schedule?.nextRun ?? null,
       completedAt: running ? null : last?.completedAt ?? null,
-      result: last ? (last.success ? 'Success' : last.partial ? 'Partial' : 'Failed') : 'No run recorded on this server',
+      result: last?.status === 'resumable' ? 'Checkpoint saved; continuing at next trigger' :
+        last?.status === 'completed_with_source_limits' ? 'Completed with source limitations' :
+        last ? (last.success ? 'Success' : last.partial ? 'Partial' : 'Failed') : 'No run recorded on this server',
       limitations: Array.isArray(last?.limitations) ? last.limitations : [],
       failedStage: !running && last?.success === false ? last.stage : null,
       insertedRows: datasets.reduce((total: number, item: any) => total + (Number(item.new_rows) || 0), 0),

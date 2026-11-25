@@ -69,11 +69,30 @@ dated CSV snapshots with `scope_coverage.csv`. It deliberately marks scope
 completion false while required access/configuration/integration data is missing.
 
 The current scheduler runs `tools/run-erapower-sync.mjs` from the project root.
-Each refresh has its own `exports/scheduled-<timestamp>` directory and publishes
-validated stages to purpose-specific `erapower_current_*` MongoDB collections.
+Each trigger refreshes live reports in `exports/poll-<timestamp>`. Deep customer,
+vehicle and history work uses `exports/scheduled-<cycle timestamp>` and resumes
+the same unfinished cycle from `logs/erapower-sync/active-cycle.json`. Completed
+stages are reused only when their file hashes and record coverage still match.
+Validated stages publish to purpose-specific `erapower_current_*` MongoDB collections.
 Existing identifiers are updated in place; previous changed contents are kept in
 `erapower_record_history`. Older snapshots cannot replace newer imported data.
 This import does not change the voice agent's legacy database/model mappings.
+
+The default UI time budget is 150 minutes, below the Windows task's 175-minute
+limit. A budget stop preserves checkpoints, publishes validated partial data and
+continues at the next three-hour trigger. Set `ERAPOWER_SYNC_BUDGET_MINUTES` in
+the ignored sync environment file to a value from 1 to 155 if needed. The PC must
+be awake and the Windows user signed in for this interactive task.
+
+`logs/erapower-sync/progress.json` contains the current stage and heartbeat;
+per-invocation `.log` files stream as workers run. `history.ndjson` records starts,
+publications and final outcomes. `latest.json` distinguishes retry, saved progress
+and completed runs with source limitations. Locked records and denied parts
+access remain documented limitations; no lock or account restriction is bypassed.
+The browser workflow only reads eraPower. CSVs and MongoDB are the write targets.
+
+From the project root, run scheduler regression checks with
+`node --test tools/erapower-scheduler.test.mjs tools/erapower-sync-records.test.mjs tools/pentana-export/csv.test.mjs`.
 
 To verify a completed refresh, load the local sync environment and run
 `node --import=dotenv/config tools/verify-erapower-refresh.mjs --input=<directory> dotenv_config_path=.env.erapower-sync`

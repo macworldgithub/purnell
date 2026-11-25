@@ -1,4 +1,5 @@
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
+import {atomicWriteFile as writeFile} from './atomic-file.mjs';
 import {join,resolve} from 'node:path';
 import {connect,serviceMenu,clickText,visibleLocator,until} from './pentana-ui.mjs';
 import {parseCsv,toCsv} from './csv.mjs';

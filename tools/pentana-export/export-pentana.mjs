@@ -1,4 +1,5 @@
-import { mkdir, writeFile, readFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, rename } from 'node:fs/promises';
+import {atomicWriteFile as writeFile} from './atomic-file.mjs';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -72,7 +73,7 @@ async function nativeCsv(name, selector) {
   const parsed = parseCsv(bytes.toString('utf8'));
   if (parsed.rows.length !== summary.expected) throw new Error(`${name}: downloaded ${parsed.rows.length} rows; report shows ${summary.expected}. Partial file retained.`);
   await rename(temporary, join(output, `${name}.csv`));
-  await page.screenshot({ path: join(output, `${name}.png`) });
+  await page.screenshot({ path: join(output, `${name}.png`) }).catch(() => {});
   const result = { name, status: 'exported', file: `${name}.csv`, rows: parsed.rows.length, columns: parsed.headers,
     report_pagination: summary.pagination, sha256: createHash('sha256').update(bytes).digest('hex'), exported_at: new Date().toISOString() };
   manifest.datasets.push(result);
@@ -179,7 +180,12 @@ try {
   manifest.finished_at = new Date().toISOString();
   manifest.complete = false; // The seven requested domains are not all accessible as bulk reports.
   await saveManifest();
-  await serviceMenu(page);
+  try { await serviceMenu(page); }
+  catch(error) {
+    manifest.cleanup_warning = error.message.split('\n')[0];
+    await saveManifest();
+    console.log('Reports saved; navigation cleanup warning recorded.');
+  }
   console.log(`Saved: ${output}`);
   if (manifest.datasets.some(d => d.status === 'failed')) process.exitCode = 2;
 } finally { await browser.close(); }

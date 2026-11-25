@@ -1,4 +1,5 @@
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {readFile,mkdir} from 'node:fs/promises';
+import {atomicWriteFile as writeFile} from './atomic-file.mjs';
 import {resolve,join} from 'node:path';
 import {connect,serviceMenu,clickText,until} from './pentana-ui.mjs';
 import {parseCsv,toCsv} from './csv.mjs';
@@ -114,5 +115,6 @@ try{
       state.failures.push({serial_no:vehicle.serial_no,error:error.message});await save();console.log('Stopped; see vehicle-context-checkpoint.json');break;
     }
   }
+  await save();
   console.log(JSON.stringify({exported:state.records.length,total:vehicles.length}));
 }finally{await browser.close();}

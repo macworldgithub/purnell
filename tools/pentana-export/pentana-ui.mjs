@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ensureSession, handleKnownSerialWarning } from './ensure-session.mjs';
+import { loadedReportPage } from './report-pagination.mjs';
 
 export const portalOrigin = 'https://c510778-erapower.pentana.cloud';
 
@@ -57,6 +58,17 @@ export async function tablePageNumber(page, selector) {
   return Number(match[1]);
 }
 
+export async function waitForReportPage(page, selector, valueSelector) {
+  return until(async () => {
+    const data = await page.frame({name:'gutsPage'}).locator(selector).evaluate((table, valueSelector) => {
+      let wrapper = table.parentElement;
+      while (wrapper && !wrapper.querySelector('[id="InfoTable"]')) wrapper = wrapper.parentElement;
+      return { info: wrapper?.querySelector('[id="InfoTable"]')?.innerText || '', values: [...table.querySelectorAll(valueSelector)].map(e => e.value) };
+    }, valueSelector);
+    return loadedReportPage(data.info, data.values);
+  }, 'Complete report page');
+}
+
 export async function goToTablePage(page, selector, number) {
   if (await tablePageNumber(page, selector) === number) return;
   const table = page.frame({ name: 'gutsPage' }).locator(selector);
@@ -71,8 +83,10 @@ export async function serviceMenu(page) {
   for (let i = 0; i < 7; i++) {
     await delay(400); // Legacy frames can show intermediate content during Exit.
     if (await handleKnownSerialWarning(page)) continue;
-    const beforeFrame = page.frame({ name: 'gutsPage' });
-    const before = await beforeFrame?.locator('body').innerText({ timeout: 1000 }).catch(() => '');
+    const before = await until(async () => {
+      const frame = page.frame({ name: 'gutsPage' });
+      return await frame?.locator('body').innerText({ timeout: 1000 }).catch(() => '') || false;
+    }, 'Pentana screen content', 30000);
     const messages = page.frames().filter(f => f.name() === 'guts');
     const message = messages.length ? await messages.at(-1).locator('body').innerText({ timeout: 500 }).catch(() => '') : '';
     if (/No (?:records|vehicles) found|mandatory field|Team is mandatory|Please enter a string you want to find first|Search criteria must|This software is optional|problems getting a valid response|must contain a valid date/i.test(message)) {

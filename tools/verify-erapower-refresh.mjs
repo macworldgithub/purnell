@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import mongoose from 'mongoose';
 import { parseCsv, toCsv } from './pentana-export/csv.mjs';
 import { contentHash, recordKey, normalizeHeaders } from './erapower-sync-records.mjs';
+import { reportNames } from './erapower-report-validation.mjs';
 
 const arg = process.argv.find(value => value.startsWith('--input='))?.slice(8);
 if (!arg) throw new Error('Supply --input=export-directory');
@@ -33,39 +34,48 @@ try {
     }
     const check = { dataset: item.name, csv_rows: csv.rows.length, unique_records: expected.size, complete: item.complete, checksum_valid: true };
     if (db) {
-      const docs = await db.collection('erapower_current_' + item.name).find({ _id: { $in: [...expected.keys()] } }).toArray();
+      const collection=db.collection('erapower_current_' + item.name);
+      const newer=reportNames.includes(item.name)&&await collection.findOne({observed_at:{$gt:manifest.startedAt},run_id:{$ne:manifest.runId}},{projection:{_id:1}});
+      const docs = await collection.find({ _id: { $in: [...expected.keys()] } }).toArray();
       check.mongo_matching = docs.filter(doc => doc.content_hash === expected.get(doc._id) && contentHash(doc.data) === doc.content_hash && doc.listed_in_latest_report).length;
       check.mongo_same_snapshot = docs.filter(doc => doc.run_id === manifest.runId).length;
-      if (check.mongo_matching !== expected.size) result.issues.push(item.name + ': MongoDB content or listing differs from CSV');
-      if (check.mongo_same_snapshot !== expected.size) result.issues.push(item.name + ': MongoDB contains records from a different snapshot');
+      check.superseded_by_newer_report=!!newer;
+      if (!newer&&check.mongo_matching !== expected.size) result.issues.push(item.name + ': MongoDB content or listing differs from CSV');
+      if (!newer&&check.mongo_same_snapshot !== expected.size) result.issues.push(item.name + ': MongoDB contains records from a different snapshot');
     }
     if (csv.rows.length !== item.rows) result.issues.push(item.name + ': manifest row count differs');
     result.datasets.push(check);
   }
-  async function coverage(label, expectedRows, actualRows, expectedKey, actualKey = expectedKey) {
+  async function coverage(label, expectedRows, actualRows, expectedKey, actualKey = expectedKey, unavailable = new Set()) {
     const expected = new Set(expectedRows.map(expectedKey).filter(Boolean));
     const actual = new Set(actualRows.map(actualKey).filter(Boolean));
-    const missing = [...expected].filter(key => !actual.has(key)).length;
-    result.coverage.push({ dataset: label, expected: expected.size, found: expected.size - missing, missing });
-    if (missing) result.issues.push(label + ': ' + missing + ' required records missing');
+    const missingIds = [...expected].filter(key => !actual.has(key));
+    const missing=missingIds.length;
+    const sourceUnavailable=missingIds.filter(key=>unavailable.has(key)).length;
+    result.coverage.push({ dataset: label, expected: expected.size, found: expected.size - missing, missing, source_unavailable:sourceUnavailable });
+    if (missing>sourceUnavailable) result.issues.push(label + ': ' + (missing-sourceUnavailable) + ' required records missing without a source exception');
   }
   const ids = await read('linked-record-index');
   const vehicleIds = await read('vehicle-lookup-index');
   const customers = await read('customers').catch(() => []);
   const vehicles = await read('vehicles').catch(() => []);
+  const unavailable=new Set((await read('vehicle_context_unavailable').catch(()=>[])).filter(row=>row.status==='source_record_locked').map(row=>row.serial_no));
   await coverage('customers', ids, customers, row => row['customer id'], row => row.customer_id);
   await coverage('vehicles', vehicleIds, vehicles, row => row['serial no'], row => row.serial_no);
   for (const dataset of ['vehicle_service_customer_context', 'service_history_summary', 'history_customer_context']) {
-    await coverage(dataset, vehicleIds, await read(dataset).catch(() => []), row => row['serial no'], row => row.serial_no);
+    await coverage(dataset, vehicleIds, await read(dataset).catch(() => []), row => row['serial no'], row => row.serial_no, dataset==='vehicle_service_customer_context'?unavailable:new Set());
   }
   const notes = await read('repair_job_narratives').catch(() => []);
   const jobs = await read('repair_order_jobs');
   const jobKey = row => JSON.stringify([row.ro_number, row.job_index, row.operation_code?.trim()]);
-  await coverage('repair_job_narratives', jobs, notes, jobKey);
+  const unavailableJobs=new Set((await read('repair_narrative_coverage').catch(()=>[])).filter(row=>row.status==='not_in_open_report_and_review_lookup_invalid').map(jobKey));
+  await coverage('repair_job_narratives', jobs, notes, jobKey, jobKey, unavailableJobs);
   const queries = await read('followup_query_coverage').catch(() => []);
   await coverage('verified_customer_followup_queries', ids, queries.filter(row => /^context_verified/.test(row.status)), row => row['customer id'], row => row.customer_id);
   result.source_failures = manifest.failures;
   result.status = result.issues.length || manifest.failures.length ? 'partial' : 'verified_available_datasets';
+  result.sourceLimited=result.coverage.some(row=>row.source_unavailable>0)||manifest.limitations.length>0;
+  result.all_scope_requirements_complete=false;
   const coverageStatus = (...names) => names.every(name => manifest.datasets.some(item => item.name === name && item.complete) && !result.coverage.some(item => item.dataset === name && item.missing)) ? 'Exported for linked records' : 'Incomplete refresh';
   const scope = [
     ['Customer identity, names and contact details', coverageStatus('customers'), 'customers.csv', 'Source blanks retained. Coverage is the known linked set, not the entire dealership customer directory.'],
