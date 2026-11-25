@@ -290,3 +290,9 @@ body {
 .entry-text {
   color: var(--text-main);
 }
+.scheduler-card { display: block; }
+.scheduler-card h2 { margin: 0 0 12px; font-size: 20px; }
+.scheduler-card p { margin: 10px 0; }
+.scheduler-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+.scheduler-details dt { font-size: 13px; opacity: .75; margin-bottom: 5px; }
+.scheduler-details dd { margin: 0; font-weight: 600; }

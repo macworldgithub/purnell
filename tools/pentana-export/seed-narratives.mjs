@@ -1,0 +1,14 @@
+import {readFile,writeFile,access} from 'node:fs/promises';
+import {parseCsv} from './csv.mjs';
+const out='exports/followup-2026-11-12';
+const dest=out+'/job-narratives-checkpoint.json';
+if(await access(dest).then(()=>true,()=>false))throw Error('Checkpoint already exists; do not replace it');
+const old=JSON.parse(await readFile('exports/run-2026-10-26/job-narratives-checkpoint.json','utf8'));
+const jobs=parseCsv(await readFile(out+'/repair_order_jobs.csv','utf8')).records;
+const refs=parseCsv(await readFile(out+'/open_repair_orders.csv','utf8')).records;
+const oldJobs=parseCsv(await readFile('exports/run-2026-10-26/repair_order_jobs.csv','utf8')).records;
+const signature=(rows,ro)=>JSON.stringify(rows.filter(r=>r.ro_number===ro).sort((a,b)=>a.job_index.localeCompare(b.job_index)));
+const completed=refs.map(r=>r['ro number']).filter(ro=>old.completed_ros.includes(ro)&&signature(jobs,ro)===signature(oldJobs,ro));
+const state={records:old.records.filter(r=>completed.includes(r.ro_number)),completed_ros:completed,failures:[]};
+await writeFile(dest,JSON.stringify(state,null,2));
+console.log(JSON.stringify({reused_ros:completed.length,reused_narratives:state.records.length}));

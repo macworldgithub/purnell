@@ -18,6 +18,21 @@
       <p class="subtitle">Enter the caller phone number, then start the GPT-Live voice agent</p>
     </header>
 
+    <section class="cli-card scheduler-card" aria-labelledby="scheduler-heading">
+      <h2 id="scheduler-heading">eraPower sync</h2>
+      <p id="scheduler-summary" role="status">Loading scheduler status…</p>
+      <dl class="scheduler-details">
+        <div><dt>Last run</dt><dd id="scheduler-last">—</dd></div>
+        <div><dt>Completed</dt><dd id="scheduler-completed">—</dd></div>
+        <div><dt>Next run</dt><dd id="scheduler-next">—</dd></div>
+        <div><dt>New rows inserted</dt><dd id="scheduler-inserted">—</dd></div>
+        <div><dt>Existing rows updated</dt><dd id="scheduler-updated">—</dd></div>
+      </dl>
+      <p>Every 3 hours · Australia/Sydney · Refreshes accessible linked records and retains change history</p>
+      <p id="scheduler-limitations"></p>
+      <p id="scheduler-datasets"></p>
+    </section>
+
     <!-- Caller CLI Settings Section -->
     <section class="cli-card">
       <div class="cli-input-group">
