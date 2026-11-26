@@ -9,9 +9,44 @@ interface Draft {
   date: string; time: string | null; reason: string; checkedAt: string; preparedTurn: string; expiresAt: number;
 }
 export function explicitRequestConfirmation(text: string): boolean {
-  const value = text.toLowerCase().replace(/[’]/g, "'").replace(/[.!?,]/g, '').trim();
-  if (/\b(no|not|dont|don't|cancel|wait|hold|change|instead|maybe|but|actually|if)\b/.test(value)) return false;
-  return /^(yes|yes please|yes thats correct|yes that's correct|yes that's right|yes that's fine|yes that works|that's correct|that's right|that is correct|yes that is correct|yes please save it|yes save it|yeah|yeah please|yep|correct|confirm|confirmed|go ahead|please go ahead|please save it|save that request|book that|yes go ahead|yes please go ahead|sounds good|that works)$/.test(value);
+  // Only used after a server-side read-back. Do not interpret a question,
+  // condition, negation, or a changed detail as consent to the old draft.
+  if (text.includes('?')) return false;
+  const value = text.toLowerCase().replace(/[’]/g, "'")
+    .replace(/\[(?:cough|breath|lip smack)[^\]]*\]/g, ' ')
+    .replace(/[.!?,;:]/g, ' ').replace(/\b(?:uh|um|ah|erm)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  if (/\b(no|not|dont|don't|do not|cannot|can't|won't|cancel|wait|hold|change|instead|maybe|but|actually|if|unless|except|before|after|only|perhaps|might)\b/.test(value)) return false;
+  const affirmative = [
+    'yes', 'yeah', 'yep', 'yup', 'certainly', 'absolutely', 'sure',
+    'okay', 'ok', 'alright', 'all right', 'agreed', 'confirmed', 'confirm',
+    'proceed', 'go ahead', 'go for it', 'do it',
+    'sounds good', 'sounds fine', 'that works', 'that works for me',
+    "that's correct", 'thats correct', 'that is correct',
+    "that's right", 'thats right', 'that is right',
+    "that's fine", 'thats fine', 'that is fine',
+    "that's good", 'thats good', 'that is good',
+    "that's okay", 'thats okay', 'that is okay',
+    'i agree', 'i confirm', 'i confirm the request', 'i confirm that',
+    'save', 'save it', 'save that', 'save this', 'save the request',
+    'save that request', 'save this request', 'save my request',
+    'save it for me', 'save that for me', 'save the booking request',
+    'save my appointment request', 'go ahead and save it',
+    'proceed with the request', 'proceed with it',
+    'book that', 'book it', 'book that in', 'book me in',
+  ];
+  const polite = ['please', 'thanks', 'thank you', 'and'];
+  // Consume whole approved phrases, longest first. Unknown words (including
+  // times, registrations and alternative dates) require a new read-back.
+  const phrases = [...affirmative, ...polite].sort((a, b) => b.length - a.length);
+  let remaining = value, confirmed = false;
+  while (remaining) {
+    const phrase = phrases.find(p => remaining === p || remaining.startsWith(p + ' '));
+    if (!phrase) return false;
+    if (affirmative.includes(phrase)) confirmed = true;
+    remaining = remaining.slice(phrase.length).trimStart();
+  }
+  return confirmed;
 }
 
 @Injectable()

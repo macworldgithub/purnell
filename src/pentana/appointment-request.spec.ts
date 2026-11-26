@@ -93,8 +93,35 @@ describe('Caller-confirmed appointment requests', () => {
   });
 
   it('only accepts explicit confirmation phrases without changed details', () => {
+    expect(explicitRequestConfirmation('Uh Yes, please save')).toBe(true);
+    expect(explicitRequestConfirmation('Please save')).toBe(true);
+    expect(explicitRequestConfirmation('Yes please save for another vehicle')).toBe(false);
+    expect(explicitRequestConfirmation('Yes please save but at six')).toBe(false);
+    expect(explicitRequestConfirmation('Ah. Yes, please, yes, proceed')).toBe(true);
+    expect(explicitRequestConfirmation('Ah. Yes, please')).toBe(true);
+    expect(explicitRequestConfirmation('yes, please, but make it ten')).toBe(false);
+    expect(explicitRequestConfirmation('please')).toBe(false);
+    expect(explicitRequestConfirmation('yes November 30 at 10')).toBe(false);
     expect(explicitRequestConfirmation("Yes, that's correct.")).toBe(true);
     expect(explicitRequestConfirmation('Yes at 10 instead')).toBe(false);
     expect(explicitRequestConfirmation('Can you check available slots')).toBe(false);
+  });
+  it('keeps and saves the read-back after the reported repeated positive reply', async () => {
+    const draft = await service.prepare(args, customer, context());
+    const confirmation = context('turn-2', 'Ah. Yes, please, yes, proceed');
+    service.beginTurn(confirmation, customer.customer_id);
+    expect(service.getPending(confirmation, customer.customer_id)?.draftId).toBe(draft.draftId);
+    const result = await service.confirm(draft.draftId, customer.customer_id, confirmation);
+    expect(result.status).toBe('saved_pending_service_confirmation');
+    expect(records.size).toBe(1);
+  });
+  it('saves on the first yes please save without recreating a draft', async () => {
+    const draft = await service.prepare(args, customer, context());
+    const reply = context('turn-2', 'Uh Yes, please save');
+    service.beginTurn(reply, customer.customer_id);
+    expect(service.getPending(reply, customer.customer_id)?.draftId).toBe(draft.draftId);
+    expect((await service.confirm(draft.draftId, customer.customer_id, reply)).status)
+      .toBe('saved_pending_service_confirmation');
+    expect(collection.updateOne).toHaveBeenCalledTimes(1);
   });
 });

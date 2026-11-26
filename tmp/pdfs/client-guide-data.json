@@ -1,0 +1,391 @@
+{
+  "verified_at": "2026-11-26T18:12:59.909Z",
+  "database": "Purnell_Pentana_VoiceAgent",
+  "customers": [
+    {
+      "name": "RENEE SAUVONNET",
+      "preferred_name": "RENEE",
+      "customer_id": "11598",
+      "phone": "+61412411265",
+      "vehicle": {
+        "rego": "RW112",
+        "serial_no": "SALYA2AX9MA301687",
+        "year": null,
+        "make": "RO",
+        "model": "VELAR TEMPLATE",
+        "colour": "Eiger Grey"
+      },
+      "repairs": [],
+      "bookings": [
+        {
+          "data": {
+            "advisor": "227",
+            "team": "S",
+            "rego_no": "RW112",
+            "carline": "Velar",
+            "appt_no": "2411",
+            "ro_no": "",
+            "fsa": "N",
+            "customer_name": "RENEE SAUVONNET",
+            "c_o": "",
+            "date_in": "12/04/2027",
+            "in": "08:00",
+            "date_out": "13/04/2027",
+            "out": "16:30",
+            "op_codes": "01RO102206305136",
+            "op_code_description": "102,000KM/72 Months MY21. (-) PM2.5 Upgrade. (-) MHEV 2021 - 2021, MA000001 - MA999999, ML000001 - ML999999",
+            "s_t": "W",
+            "est": "4.00",
+            "custno": "11598",
+            "vehicle_desc": "VELAR TEMPLATE",
+            "lc": "R",
+            "serial_no": "SALYA2AX9MA301687",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        }
+      ],
+      "narratives": [],
+      "requests": [
+        {
+          "preferred_time": "12:00",
+          "requested_date": "2026-11-27",
+          "status": "pending_service_confirmation"
+        }
+      ],
+      "parts_count": 0
+    },
+    {
+      "name": "MARK SIDHOM",
+      "preferred_name": "MARK",
+      "customer_id": "28884",
+      "phone": "+61422442857",
+      "vehicle": {
+        "rego": "NBW75M",
+        "serial_no": "SALRA2AK1JA051642",
+        "year": null,
+        "make": "RO",
+        "model": "DISCOVERY TD6 190KW HSE",
+        "colour": "LRO1AB"
+      },
+      "repairs": [],
+      "bookings": [
+        {
+          "data": {
+            "advisor": "227",
+            "team": "S",
+            "rego_no": "NBW75M",
+            "carline": "Discovery",
+            "appt_no": "1095",
+            "ro_no": "",
+            "fsa": "N",
+            "customer_name": "MARK SIDHOM",
+            "c_o": "",
+            "date_in": "04/03/2027",
+            "in": "07:30",
+            "date_out": "05/03/2027",
+            "out": "17:00",
+            "op_codes": "01RO101014406126",
+            "op_code_description": "234,000KM/108 Months (+) Diesel Particle Filter. (-) Rear Locking Differential JA000001 - KA090063",
+            "s_t": "C",
+            "est": "5.00",
+            "custno": "28884",
+            "vehicle_desc": "DISCOVERY TD6 190KW HSE",
+            "lc": "R",
+            "serial_no": "SALRA2AK1JA051642",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        },
+        {
+          "data": {
+            "advisor": "227",
+            "team": "S",
+            "rego_no": "NBW75M",
+            "carline": "Discovery",
+            "appt_no": "1095",
+            "ro_no": "",
+            "fsa": "N",
+            "customer_name": "MARK SIDHOM",
+            "c_o": "",
+            "date_in": "04/03/2027",
+            "in": "07:30",
+            "date_out": "05/03/2027",
+            "out": "17:00",
+            "op_codes": "88ROZZZZZZ005",
+            "op_code_description": "REGO Inspection",
+            "s_t": "C",
+            "est": "0.50",
+            "custno": "28884",
+            "vehicle_desc": "DISCOVERY TD6 190KW HSE",
+            "lc": "R",
+            "serial_no": "SALRA2AK1JA051642",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        }
+      ],
+      "narratives": [],
+      "requests": [],
+      "parts_count": 0
+    },
+    {
+      "name": "CHARBEL CHEBRAWY",
+      "preferred_name": "CHARBEL",
+      "customer_id": "11470",
+      "phone": "+61400778602",
+      "vehicle": {
+        "rego": "NBQ58R",
+        "serial_no": "SALWA2KE0GA117683",
+        "year": null,
+        "make": "LD",
+        "model": "RANGE ROVER SPORT 3.0L TDV6",
+        "colour": "1aa White"
+      },
+      "repairs": [
+        {
+          "number": "L3051",
+          "status": "OPEN",
+          "advisor": "KAMAL Ghassah",
+          "dropoff": "26/05/2026",
+          "time": "08:45",
+          "promised": "07/10/2026",
+          "promised_time": "16:15",
+          "snapshot": "2026-10-26"
+        }
+      ],
+      "bookings": [
+        {
+          "data": {
+            "advisor": "190",
+            "team": "S",
+            "rego_no": "NBQ58R",
+            "carline": "RANGE ROVER SPORT 3.0L TDV6",
+            "appt_no": "",
+            "ro_no": "L3051",
+            "fsa": "N",
+            "customer_name": "CHARBEL CHEBRAWY",
+            "c_o": "",
+            "date_in": "28/05/2026",
+            "in": "08:45",
+            "date_out": "27/11/2026",
+            "out": "16:15",
+            "op_codes": "05ROZZZZZZ001",
+            "op_code_description": "Diagnose",
+            "s_t": "C",
+            "est": "1.00",
+            "custno": "11470",
+            "vehicle_desc": "RANGE ROVER SPORT 3.0L TDV6",
+            "lc": "",
+            "serial_no": "SALWA2KE0GA117683",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        }
+      ],
+      "narratives": [
+        {
+          "ro": "L3051",
+          "complaint": "CHECK & REPORT KNOCKING NOISE FROM ENGINE -",
+          "cause": "",
+          "correction": "",
+          "notes": ""
+        }
+      ],
+      "requests": [],
+      "parts_count": 0
+    },
+    {
+      "name": "CONSTRUCTION MACHINERY AUSTRALIA PTY LIMITED",
+      "customer_id": "45438",
+      "phone": "+61416807584",
+      "vehicle": {
+        "rego": "KLP",
+        "serial_no": "SALKABA92RA238222",
+        "year": null,
+        "make": "RO",
+        "model": "MY24 RANGE ROVER 4.4L V8 530PS 7S A/B LWB",
+        "colour": "RANRAN1AG"
+      },
+      "repairs": [
+        {
+          "number": "L3521",
+          "status": "OPEN",
+          "advisor": "KAMAL Ghassah",
+          "dropoff": "10/07/2026",
+          "time": "08:45",
+          "promised": "07/10/2026",
+          "promised_time": "17:00",
+          "snapshot": "2026-10-26"
+        }
+      ],
+      "bookings": [
+        {
+          "data": {
+            "advisor": "190",
+            "team": "S",
+            "rego_no": "KLP",
+            "carline": "Range Rover",
+            "appt_no": "",
+            "ro_no": "L3521",
+            "fsa": "N",
+            "customer_name": "CONSTRUCTION MACHINERY AUSTRALIA PTY LIMITED ",
+            "c_o": "",
+            "date_in": "07/12/2026",
+            "in": "08:15",
+            "date_out": "08/12/2026",
+            "out": "16:30",
+            "op_codes": "03RO603502755023",
+            "op_code_description": "",
+            "s_t": "W",
+            "est": "0.50",
+            "custno": "45438",
+            "vehicle_desc": "MY24 RANGE ROVER 4.4L V8 530PS 7S A/B LWB",
+            "lc": "R",
+            "serial_no": "SALKABA92RA238222",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        },
+        {
+          "data": {
+            "advisor": "190",
+            "team": "S",
+            "rego_no": "KLP",
+            "carline": "Range Rover",
+            "appt_no": "",
+            "ro_no": "L3521",
+            "fsa": "N",
+            "customer_name": "CONSTRUCTION MACHINERY AUSTRALIA PTY LIMITED ",
+            "c_o": "",
+            "date_in": "07/12/2026",
+            "in": "08:15",
+            "date_out": "08/12/2026",
+            "out": "16:30",
+            "op_codes": "03ROZZZZZZ001",
+            "op_code_description": "Diagnose",
+            "s_t": "W",
+            "est": "1.00",
+            "custno": "45438",
+            "vehicle_desc": "MY24 RANGE ROVER 4.4L V8 530PS 7S A/B LWB",
+            "lc": "R",
+            "serial_no": "SALKABA92RA238222",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        },
+        {
+          "data": {
+            "advisor": "190",
+            "team": "S",
+            "rego_no": "KLP",
+            "carline": "Range Rover",
+            "appt_no": "",
+            "ro_no": "L3521",
+            "fsa": "N",
+            "customer_name": "CONSTRUCTION MACHINERY AUSTRALIA PTY LIMITED ",
+            "c_o": "",
+            "date_in": "07/12/2026",
+            "in": "08:15",
+            "date_out": "08/12/2026",
+            "out": "16:30",
+            "op_codes": "99ROZZZZZZ002",
+            "op_code_description": "Repair",
+            "s_t": "W",
+            "est": "0.50",
+            "custno": "45438",
+            "vehicle_desc": "MY24 RANGE ROVER 4.4L V8 530PS 7S A/B LWB",
+            "lc": "R",
+            "serial_no": "SALKABA92RA238222",
+            "wj": "",
+            "nd": "0"
+          },
+          "observed_at": "2026-11-26T16:15:17.867Z"
+        }
+      ],
+      "narratives": [
+        {
+          "ro": "L3521",
+          "complaint": "CHECK SUSPENSION FEELS LIKE ITS ON THE HIGHEST SETTING AND\nFEELS LIKE SWAYING WHEN DRIVING",
+          "cause": "",
+          "correction": "",
+          "notes": ""
+        },
+        {
+          "ro": "L3521",
+          "complaint": "CHECK SEAT SWITCHES FOR THE REAR DONT SEEM TO WORK CORRECTLY\n- CUSTOMER TO DEOMSTRATE",
+          "cause": "",
+          "correction": "",
+          "notes": ""
+        },
+        {
+          "ro": "L3521",
+          "complaint": "CARRY OUT RECALL CAMPAIGN D120",
+          "cause": "",
+          "correction": "",
+          "notes": ""
+        }
+      ],
+      "requests": [],
+      "parts_count": 0
+    },
+    {
+      "name": "ANDREW JOHNSTON",
+      "preferred_name": "ANDREW",
+      "customer_id": "11573",
+      "phone": "+61410533320",
+      "vehicle": {
+        "rego": "CAR61Z",
+        "serial_no": "SALEA7AW2T2634054",
+        "year": null,
+        "make": "RO",
+        "model": "Defender 110 26MY D350 X-Dynamic SE 5-dr AWD Auto",
+        "colour": "Woolstone Green"
+      },
+      "repairs": [
+        {
+          "number": "L3897",
+          "status": "OPEN",
+          "advisor": "KAMAL Ghassah",
+          "dropoff": "18/08/2026",
+          "time": "08:00",
+          "promised": "19/08/2026",
+          "promised_time": "16:30",
+          "snapshot": "2026-10-26"
+        }
+      ],
+      "bookings": [],
+      "narratives": [
+        {
+          "ro": "L3897",
+          "complaint": "SUPPLY AND FIT FRONT AND REAR MUD FLAPS - CE GOODWILL DUE TO\nLATE NEW CAR DELIVERY",
+          "cause": "",
+          "correction": "- SUPPLIED AND FITTED FRONT & REAR MUD FLAPS",
+          "notes": ""
+        },
+        {
+          "ro": "L3897",
+          "complaint": "CHECK AND REPORT ON VIBRATION WHEN TRAVELLING AT APPROX\n100 - 110 KPH",
+          "cause": "",
+          "correction": "- ROAD TESTED VEHICLE\n- RAISED VEHICLE ON HOIST TO CHECK ALL SUSPENSION, TYRES\nUNDERBODY AND UNABLE TO IDENTIFY ANY CONCERNS\n\n*** WILL NEED TO RE-BOOK FOR FURTHER INSPECTION***",
+          "notes": ""
+        },
+        {
+          "ro": "L3897",
+          "complaint": "CHECK AUTO UNLOCK ON VEHICLE APPROACH INTERMITTANTLY IN-OP",
+          "cause": "",
+          "correction": "- CHECKED AND CONFIRMED WALK AWAY LOCKING & UNLOCKING NOT\nWORKING.\n- CHECKED AND FOUND WALK AWAY LOCKING ON APPROACH SWITCHED\nOFF.\n- SWITCHED BACK ON AS REQUIRED AND CONFIRMED NOW WORKING.",
+          "notes": ""
+        }
+      ],
+      "requests": [],
+      "parts_count": 0
+    }
+  ]
+}
