@@ -96,10 +96,18 @@ try{
     }
   }
   if(!checked.complete)await history({event:'live_reports_partial',error:reportError?.message||'Some reports did not validate'});
+  let capacityError;
+  try{
+    await progress('Refreshing daily appointment capacity');
+    const capacityFolder=join(exportsRoot,'capacity-'+invocationId);
+    await run('scrape-daily-capacity.mjs',[capacityFolder],exporter,env);
+    await publishFolder(capacityFolder);
+  }catch(error){capacityError=error;await history({event:'capacity_refresh_failed',error:error.message});}
   let manifest,paused=false;
   try{manifest=await refreshScope({output,exporter,run,env,progress,runId:cycle.runId,startedAt:cycle.startedAt,publish:()=>publishFolder(output)});}
   catch(error){if(error.code!=='ERAPOWER_BUDGET')throw error;paused=true;manifest=await loadJson(join(output,'full-sync-manifest.json'));}
-  manifest.failures=manifest.failures.filter(item=>!['Final verification','Live reports'].includes(item.stage));
+  manifest.failures=manifest.failures.filter(item=>!['Final verification','Live reports','Daily appointment capacity'].includes(item.stage));
+  if(capacityError)manifest.failures.push({stage:'Daily appointment capacity',error:'Could not refresh verified daily capacity; see invocation log'});
   if(!checked.complete)manifest.failures.push({stage:'Live reports',error:'Some live reports did not validate; see the invocation log and poll manifest'});
   await saveJson(join(output,'full-sync-manifest.json'),manifest);
   if(!paused){

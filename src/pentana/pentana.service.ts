@@ -1,19 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AppointmentAvailabilityService } from './appointment-availability.service';
+import { capacityAnswer } from './appointment-capacity';
 import {
   MOCK_PENTANA_CUSTOMERS,
   MOCK_STAFF_MEMBERS,
-  MOCK_APPOINTMENT_SLOTS,
   ROADSIDE_ASSISTANCE,
   SITE_ROUTING,
   PentanaCustomer,
   StaffMember,
-  AppointmentSlot,
   HandoffRecord,
 } from './pentana.data';
 
 @Injectable()
 export class PentanaService {
   private readonly logger = new Logger(PentanaService.name);
+  constructor(@Optional() private readonly appointmentAvailability?: AppointmentAvailabilityService) {}
 
   normalizePhone(phone: string): string {
     return phone.replace(/[^0-9]/g, '');
@@ -41,8 +42,8 @@ export class PentanaService {
     );
   }
 
-  getAppointmentSlots(): AppointmentSlot[] {
-    return MOCK_APPOINTMENT_SLOTS;
+  async getAppointmentSlots(preferredDay?: string) {
+    return this.appointmentAvailability ? this.appointmentAvailability.getAvailability(preferredDay) : capacityAnswer([]);
   }
 
   getRoadsideNumber(brand: string): string {

@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { contentHash, recordKey, normalizeHeaders } from './erapower-sync-records.mjs';
+
+test('Daily capacity updates keep the same identity for each diary date and department',()=>{
+  const row={dealership_id:'01',department_id:'S',advisor_scope:'all',date:'2026-11-27',appointments_recorded:'13'};
+  assert.equal(recordKey('daily_booking_capacity',row),recordKey('daily_booking_capacity',{...row,appointments_recorded:'14'}));
+  assert.notEqual(recordKey('daily_booking_capacity',row),recordKey('daily_booking_capacity',{...row,department_id:'P'}));
+  assert.notEqual(contentHash(row),contentHash({...row,appointments_recorded:'14'}));
+  assert.equal(contentHash({...row,source_captured_at:'old'}),contentHash({...row,source_captured_at:'new'}));
+});
 test('Changed order retains identity while producing a new content version', () => {
   const before = { ro_number: '00123', status: 'Awaiting Parts', exported_at: 'old' };
   const same = { ...before, exported_at: 'new' };

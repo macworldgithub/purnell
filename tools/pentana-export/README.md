@@ -91,6 +91,21 @@ and completed runs with source limitations. Locked records and denied parts
 access remain documented limitations; no lock or account restriction is bypassed.
 The browser workflow only reads eraPower. CSVs and MongoDB are the write targets.
 
+Every trigger also refreshes the Service / All advisors capacity calendar in
+`exports/capacity-<invocation timestamp>` and upserts 21 dated rows into
+`Purnell_Pentana_VoiceAgent.erapower_current_daily_booking_capacity`. Dates are
+stable identities, so a changed count updates that date rather than creating a
+duplicate. These are daily totals, not exact times or job-specific eligibility.
+
+The voice tool `queryAppointmentSlots` reads that collection through
+`AppointmentAvailabilityService`, using `ERAPOWER_DATA_MONGO_URI`, then
+`PURNELL_COPY_TARGET_URI`, then the ignored local sync configuration. Hosted
+deployments must set an environment variable; credentials are not shipped.
+It offers future dates only when both appointment capacity and unsold hours
+remain, reports when checked, and rejects snapshots older than four hours.
+Unavailable or stale data produces no mock fallback. Booking creation remains
+disabled, and the separate legacy customer/booking mappings are unchanged.
+
 From the project root, run scheduler regression checks with
 `node --test tools/erapower-scheduler.test.mjs tools/erapower-sync-records.test.mjs tools/pentana-export/csv.test.mjs`.
 

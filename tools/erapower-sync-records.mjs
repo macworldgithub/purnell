@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-const ignored = new Set(['exported_at', 'source', 'row_index']);
+const ignored = new Set(['exported_at', 'source', 'row_index', 'source_captured_at']);
 export function contentHash(data) {
   return createHash('sha256').update(JSON.stringify(Object.entries(data).filter(([key, value]) => !ignored.has(key) && value !== '').sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
 }
@@ -24,6 +24,7 @@ export function recordKey(name, data) {
     workshop_status: ['ro_no', 'dpt'],
     loan_car_status: ['serial_no', 'agree_no_upd', 'date_out', 'date_out_time'],
     appointment_capacity_totals: ['from_date', 'to_date', 'department_id', 'advisor_id'],
+    daily_booking_capacity: ['dealership_id', 'department_id', 'advisor_scope', 'date'],
     appointments: ['appt_no', 'ro_no', 'serial_no', 'date_in', 'in', 'op_codes', 's_t'],
     customer_followups: ['customer_id', 'date', 'time', 'description', 'stock_or_rego'],
   }[name];
