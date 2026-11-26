@@ -5,6 +5,13 @@ import { parse } from 'dotenv';
 import { mongo } from 'mongoose';
 import { capacityAnswer } from './appointment-capacity';
 
+export function appointmentDatabaseConfig(env: Record<string, string | undefined>, local: Record<string, string>) {
+  return {
+    uri: env.ERAPOWER_DATA_MONGO_URI || env.PURNELL_COPY_TARGET_URI || local.PURNELL_COPY_TARGET_URI || env.MONGO_URI,
+    dbName: env.MONGO_DB_NAME || 'Purnell_Pentana_VoiceAgent',
+  };
+}
+
 @Injectable()
 export class AppointmentAvailabilityService implements OnModuleDestroy {
   private client?: mongo.MongoClient;
@@ -14,12 +21,12 @@ export class AppointmentAvailabilityService implements OnModuleDestroy {
       if (!this.client) {
         let local: Record<string, string> = {};
         try { local = parse(readFileSync(join(process.cwd(), '.env.erapower-sync'))); } catch { /* Hosted environments use environment variables. */ }
-        const uri = process.env.ERAPOWER_DATA_MONGO_URI || process.env.PURNELL_COPY_TARGET_URI || local.PURNELL_COPY_TARGET_URI;
+        const { uri } = appointmentDatabaseConfig(process.env, local);
         if (!uri) throw new Error('Appointment database is not configured');
         this.client = new mongo.MongoClient(uri, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000, socketTimeoutMS: 10000 });
       }
       await this.client.connect();
-      return this.client.db('Purnell_Pentana_VoiceAgent');
+      return this.client.db(appointmentDatabaseConfig(process.env, {}).dbName);
   }
 
   async getAvailability(preference?: string) {

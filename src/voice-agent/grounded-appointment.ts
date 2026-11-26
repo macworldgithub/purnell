@@ -6,7 +6,7 @@ export function appointmentReply(profile: FullCustomerProfile, text: string): st
   // New requests and their follow-ups must reach the real capacity/request tools.
   // This shortcut answers recorded appointment questions only.
   if (asksForNewAppointmentAvailability(text)) return null;
-  if (/\b(availability|available|diary|slots?|tomorrow|book|new|request|prefer|preferred|save|confirm|yes)\b/i.test(text)) return null;
+  if (/\b(availability|available|diary|slots?|tomorrow|book|new|request|prefer|preferred|save|confirm|yes|select|choose)\b/i.test(text)) return null;
   if (/\b(transfer|callback|put me through|speak to)\b/i.test(text))
     return 'I cannot transfer this browser call or send a callback request. Please contact Service directly.';
   if (!/appointment|booking|booked|service date|work.*listed|listed.*work/i.test(text)) return null;

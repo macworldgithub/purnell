@@ -100,6 +100,20 @@ describe('VoiceAgentService GPT-Live backend', () => {
     expect(openAi.generateResponse).not.toHaveBeenCalled();
     expect(openAi.beginAppointmentRequestTurn).toHaveBeenCalledWith(expect.objectContaining({ callId: token, callerText: 'What is my recorded appointment?' }), 'C1');
   });
+  it('does not intercept verified requests for new appointment availability', async () => {
+    customerDatabase.getFullCustomerProfile.mockResolvedValue({
+      customer: { customer_id: 'C1', customer_name: 'Test Customer', vehicles: [{ rego: 'TEST01' }] },
+      repair_orders: [], service_bookings: [],
+    });
+    openAi.generateResponse.mockResolvedValue({ text: 'Recorded daily capacity is available for the checked date.' });
+    const token = service.createCall('0412000006');
+    const answer = await service.processTextMessage('Can I book a new appointment tomorrow?', [], '', token);
+    expect(answer.text).toContain('Recorded daily capacity');
+    expect(openAi.generateResponse).toHaveBeenCalledWith(
+      expect.any(Array), expect.any(String), 'C1', expect.any(Function),
+      expect.objectContaining({ callId: token, callerText: 'Can I book a new appointment tomorrow?' }),
+    );
+  });
 
   it('delegates text to the configured reasoning model without generating speech', async () => {
     customerDatabase.getFullCustomerProfile.mockResolvedValue(null);

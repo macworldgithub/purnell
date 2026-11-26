@@ -31,6 +31,12 @@ describe('recorded appointment answers', () => {
     expect(appointmentReply(profile, 'cancel my booking')).toContain('No booking has been changed');
     expect(appointmentReply(profile, 'change my appointment')).toContain('Please contact Service');
   });
+  it('routes new booking requests and date selections to backend tools', () => {
+    for (const text of ['book tomorrow at eight', 'available slots', 'a new appointment',
+      'save the booking request', 'I choose the first date']) {
+      expect(appointmentReply(profile, text)).toBeNull();
+    }
+  });
   it('does not claim transfers or callbacks', () => {
     expect(appointmentReply(profile, 'send a callback')).toContain('cannot transfer');
   });

@@ -71,7 +71,13 @@ export class AppointmentRequestService {
     if (draft.preparedTurn === context.turnId || !explicitRequestConfirmation(context.callerText)) return { status: 'confirmation_required', response: 'Please confirm whether you want me to save that date and preferred time as a request for Service to confirm.' };
     try {
       const collection = (await this.availability.getDataDatabase()).collection<{ _id: string; customer_id: string; status: string; [key: string]: unknown }>('voice_appointment_requests');
-      const success = (alreadySaved: boolean) => ({ status: 'saved_pending_service_confirmation', requestId: draft.id, alreadySaved, response: 'I have saved your requested date and preferred time for Service to confirm. This is a request, not a confirmed booking or reserved time.' });
+      const success = (alreadySaved: boolean) => ({
+        status: 'saved_pending_service_confirmation', requestId: draft.id, alreadySaved,
+        response: 'Your request reference is ' + draft.id + '. I have saved ' + draft.reason +
+          ' for registration ' + draft.registration + ' on ' + draft.date +
+          (draft.time ? ', preferred time ' + draft.time : ', time to be arranged') +
+          '. It is pending Service confirmation, not a confirmed booking or reserved time. Your existing appointment has not been changed.',
+      });
       const existing = await collection.findOne({ _id: draft.id, customer_id: customerId });
       if (existing?.status === 'pending_service_confirmation') return success(true);
       const capacity = await this.availability.getAvailability(draft.date);

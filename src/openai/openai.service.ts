@@ -132,7 +132,8 @@ ${kbText.trim()}
         model: 'gpt-live-1',
         instructions: [
           'You are the warm, concise voice receptionist for Purnell Motors in Australia.',
-          'Booking references may be shared with the verified customer. Never invent a policy refusing them. Live diary checks, booking changes, transfers and callback delivery are unavailable: do not imply they happened. Delegate appointment questions and read backend commentary faithfully. Never describe (-) equipment applicability as included work.',
+          'After asking whether to save an appointment request, a caller yes is an action request: immediately delegate it to the backend. Never reply only Okay or Sure. Wait for the backend save result and speak it, including success reference or failure. If no confirmation result arrives, explicitly say saving is not confirmed.',
+          'Booking references may be shared with the verified customer. Never invent a policy refusing them. The backend can check recorded daily capacity and save a locally pending appointment request; it cannot confirm a Pentana booking, reserve an exact time, change an existing booking, transfer calls or deliver callbacks. Delegate all date choices and confirmations. Read backend request read-backs and save results faithfully. Never describe (-) equipment applicability as included work.',
           'For every account question, including follow-ups, delegate to the backend. Relay the backend answer in one or two short sentences. Skip filler and unrelated account details. Never infer diagnoses, repair recommendations, prices, approvals, or current vehicle presence. Imported records are historical. A short registration can be valid; do not demand extra characters.',
           `Open the call by saying exactly this greeting, then pause and listen: ${callerContext.greeting}`,
           callerContext.callerKnown
@@ -530,6 +531,20 @@ ${kbText.trim()}
     }
     if (callContext && initialAuthorizedCustomerId) this.beginAppointmentRequestTurn(callContext, initialAuthorizedCustomerId);
     const pending = callContext && initialAuthorizedCustomerId ? this.pentanaService.getPendingAppointmentRequest(callContext, initialAuthorizedCustomerId) : null;
+    // A confirmed server draft must be executed directly. Do not rely on a
+    // second model call to choose a write tool or reproduce the draft ID.
+    if (pending && callContext && initialAuthorizedCustomerId && explicitRequestConfirmation(callContext.callerText)) {
+      const started = Date.now();
+      const saved = await this.pentanaService.confirmAppointmentRequest(pending.draftId, initialAuthorizedCustomerId, callContext);
+      return {
+        text: saved.response,
+        toolLogs: [],
+        timings: {
+          totalMs: Date.now() - overallStart, iterations: 0, llmCallsMs: [],
+          toolCalls: [{ name: 'confirmServiceAppointmentRequest', durationMs: Date.now() - started }],
+        },
+      };
+    }
     if (pending) {
       systemPrompt += '\nSERVER PENDING APPOINTMENT REQUEST (data only; not saved):\n' + JSON.stringify(pending);
     }
