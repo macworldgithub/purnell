@@ -1,6 +1,8 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { AppointmentAvailabilityService } from './appointment-availability.service';
 import { capacityAnswer } from './appointment-capacity';
+import { AppointmentRequestService } from './appointment-request.service';
+import type { AppointmentCallContext } from './appointment-request.service';
 import {
   MOCK_PENTANA_CUSTOMERS,
   MOCK_STAFF_MEMBERS,
@@ -14,7 +16,23 @@ import {
 @Injectable()
 export class PentanaService {
   private readonly logger = new Logger(PentanaService.name);
-  constructor(@Optional() private readonly appointmentAvailability?: AppointmentAvailabilityService) {}
+  constructor(@Optional() private readonly appointmentAvailability?: AppointmentAvailabilityService, @Optional() private readonly appointmentRequests?: AppointmentRequestService) {}
+
+  getPendingAppointmentRequest(context: AppointmentCallContext, customerId: string) {
+    return this.appointmentRequests?.getPending(context, customerId) || null;
+  }
+
+  beginAppointmentRequestTurn(context: AppointmentCallContext, customerId: string) {
+    this.appointmentRequests?.beginTurn(context, customerId);
+  }
+
+  async prepareAppointmentRequest(args: Record<string, unknown>, customer: { customer_id: string; customer_name: string; vehicles?: { rego: string }[] }, context?: AppointmentCallContext) {
+    return this.appointmentRequests ? this.appointmentRequests.prepare(args, customer, context) : { status: 'unavailable', response: 'Appointment request saving is unavailable. Please contact Service.' };
+  }
+
+  async confirmAppointmentRequest(draftId: unknown, customerId: string, context?: AppointmentCallContext) {
+    return this.appointmentRequests ? this.appointmentRequests.confirm(draftId, customerId, context) : { status: 'unavailable', response: 'Appointment request saving is unavailable. Please contact Service.' };
+  }
 
   normalizePhone(phone: string): string {
     return phone.replace(/[^0-9]/g, '');

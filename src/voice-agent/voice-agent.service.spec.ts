@@ -86,6 +86,7 @@ describe('VoiceAgentService GPT-Live backend', () => {
       expect.stringContaining('"snapshotDate":"2026-10-26"'),
       'C1',
       expect.any(Function),
+      undefined,
     );
   });
 

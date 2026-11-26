@@ -173,6 +173,7 @@ export class VoiceAgentService {
       customerContext,
       profile?.customer.customer_id,
       id => { newlyVerified = id; if (call) call.customerId = id; },
+      callToken ? { callId: callToken, turnId: randomUUID(), callerText: userText } : undefined,
     );
     if (newlyVerified && !profile) {
       result.text = 'Thanks, I’ve verified your account. How can I help?';

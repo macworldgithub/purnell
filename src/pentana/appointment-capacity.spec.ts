@@ -1,6 +1,12 @@
-import { capacityAnswer, formatCapacityReply, preferredDate, sydneyDate } from './appointment-capacity';
+import { asksForNewAppointmentAvailability, capacityAnswer, formatCapacityReply, preferredDate, sydneyDate } from './appointment-capacity';
 
 describe('Recorded daily appointment capacity', () => {
+  it('routes new booking requests to availability without confusing existing appointments or staff', () => {
+    expect(asksForNewAppointmentAvailability('Can I book a new appointment tomorrow?')).toBe(true);
+    expect(asksForNewAppointmentAvailability('What dates are available?')).toBe(true);
+    expect(asksForNewAppointmentAvailability('What is my next recorded service appointment?')).toBe(false);
+    expect(asksForNewAppointmentAvailability('Is Robert available?')).toBe(false);
+  });
   const now = new Date('2026-11-26T08:30:00Z');
   const row = (date: string, used = '13', limit = '20', hours = '13') => ({ data: { date, appointments_recorded: used, appointment_limit: limit, unsold_hours: hours, source_captured_at: '2026-11-26T08:00:00Z' } });
 

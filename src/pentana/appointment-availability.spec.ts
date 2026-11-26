@@ -32,4 +32,16 @@ describe('Voice appointment capacity integration', () => {
     expect(result.text).toContain('Service must confirm');
     expect(result.timings.toolCalls?.map(t => t.name)).toContain('queryAppointmentSlots');
   });
+
+  it('requires an availability tool call for the reported new-booking wording', async () => {
+    const adapter = { getAvailability: jest.fn().mockResolvedValue({ status: 'dates_with_capacity', dates: [{ date: '2026-11-27' }], checkedAt: '2026-11-26T10:00:00Z' }) };
+    const service = new OpenAiService(new PentanaService(adapter as unknown as AppointmentAvailabilityService), {} as CustomerDatabaseService);
+    const create = jest.fn().mockResolvedValue({ choices: [{ message: { tool_calls: [{ id: 'new-booking-test', type: 'function', function: { name: 'queryAppointmentSlots', arguments: '{"preferredDay":"tomorrow"}' } }] } }] });
+    (service as any).openai.chat.completions.create = create;
+    const result = await service.generateResponse([{ role: 'user', content: 'Can I book a new appointment tomorrow?' }], '', 'verified-customer');
+    expect(create.mock.calls[0][0].tool_choice.function.name).toBe('queryAppointmentSlots');
+    expect(adapter.getAvailability).toHaveBeenCalledWith('tomorrow');
+    expect(result.text).toContain('preferred drop-off time');
+    expect(result.text).not.toContain('cannot check');
+  });
 });

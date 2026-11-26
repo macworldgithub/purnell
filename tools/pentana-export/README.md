@@ -106,6 +106,17 @@ remain, reports when checked, and rejects snapshots older than four hours.
 Unavailable or stale data produces no mock fallback. Booking creation remains
 disabled, and the separate legacy customer/booking mappings are unchanged.
 
+The voice agent can prepare and save a service **request** in the separate
+`Purnell_Pentana_VoiceAgent.voice_appointment_requests` collection. It verifies the
+customer/vehicle, checks the selected date against fresh daily capacity, reads
+back the date and optional preferred time, then requires explicit caller
+confirmation on a later turn. A confirmation rechecks capacity before an
+idempotent insert. Dates/times remain requests with
+`status=pending_service_confirmation`, `time_slot_verified=false`,
+`capacity_reserved=false` and no Pentana booking ID. Nothing creates a booking in
+eraPower. Drafts are scoped to the verified call/customer and expire after ten
+minutes. Server restart discards unconfirmed drafts; saved requests remain.
+
 From the project root, run scheduler regression checks with
 `node --test tools/erapower-scheduler.test.mjs tools/erapower-sync-records.test.mjs tools/pentana-export/csv.test.mjs`.
 
