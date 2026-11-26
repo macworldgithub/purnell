@@ -8,7 +8,7 @@ import {
   OpenAiBrainConfig,
 } from '../config/voice-agent.config';
 import { PentanaService } from '../pentana/pentana.service';
-import { asksForNewAppointmentAvailability, formatCapacityReply } from '../pentana/appointment-capacity';
+import { asksForEarliestAppointmentDates, asksForNewAppointmentAvailability, formatCapacityReply } from '../pentana/appointment-capacity';
 import { explicitRequestConfirmation } from '../pentana/appointment-request.service';
 import type { AppointmentCallContext } from '../pentana/appointment-request.service';
 
@@ -140,6 +140,7 @@ ${kbText.trim()}
             : 'The incoming number does not match a customer record. Ask for the caller full name and vehicle registration, then verify both against the same CRM record using verifyPentanaCustomer before providing any customer service. If verification fails, explain that Purnell services the registered customer only and offer to take a message for registration assistance. Do not collect service details, create requests, or discuss any customer record before verification.',
           'Speak naturally in Australian English. Answer simple conversational questions directly. For customer verification/profile, repair orders, parts status, appointment availability, staff availability, and callback or staff handoff, delegate to the application backend before answering. Use the backend result; never invent dealership or customer information.',
           'Always delegate every new appointment or booking request to the backend, including "Can I book tomorrow?" and requests to save a date or time. The backend checks recorded daily capacity and can save an appointment REQUEST after reading back the chosen date, preferred time and vehicle and obtaining caller confirmation. Do not answer with a generic inability to check or tell the caller only to contact Service without delegating first. Read appointment request read-backs and save acknowledgements verbatim, including their confirmation question and pending status. Times are preferences, not verified slots. No booking is confirmed in eraPower. For existing appointments, retrieve the verified customer booking.',
+          'A caller asking for an early, earlier or sooner appointment is asking to check dates with capacity. Always delegate that request; do not repeat their recorded appointment or refuse before checking. Checking dates does not change or cancel an existing booking.',
           'If the caller clearly says goodbye, asks to hang up, or says they are finished, respond with a brief polite farewell and then stop. The application will close the session after your farewell audio finishes. Do not keep asking follow-up questions.',
           'Never invent dealership or customer information. Follow the backend result and do not reveal personal data unless the caller is verified. A caller may only receive information belonging to the single customer record verified for them; never reveal or confirm another customer record.',
         ].join(' '),
@@ -226,7 +227,7 @@ ${kbText.trim()}
             properties: {
               preferredDay: {
                 type: 'string',
-                description: 'Optional Service date as YYYY-MM-DD, DD/MM/YYYY, today, tomorrow or a weekday. Ask for clarification if ambiguous.',
+                description: 'Optional Service date as YYYY-MM-DD, DD/MM/YYYY, today, tomorrow or a weekday. Omit for early, earlier, soonest or next available dates. Ask for clarification if ambiguous.',
               },
             },
           },
@@ -465,7 +466,8 @@ ${kbText.trim()}
         }
 
         case 'queryAppointmentSlots': {
-          result = JSON.stringify(await this.pentanaService.getAppointmentSlots(typeof args.preferredDay === 'string' ? args.preferredDay : undefined));
+          const preference = callContext && asksForEarliestAppointmentDates(callContext.callerText) ? undefined : typeof args.preferredDay === 'string' ? args.preferredDay : undefined;
+          result = JSON.stringify(await this.pentanaService.getAppointmentSlots(preference));
           break;
         }
 
@@ -510,6 +512,10 @@ ${kbText.trim()}
     }
   }
 
+  beginAppointmentRequestTurn(context: AppointmentCallContext, customerId: string) {
+    this.pentanaService.beginAppointmentRequestTurn(context, customerId);
+  }
+
   async generateResponse(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     customerContext?: string,
@@ -522,7 +528,7 @@ ${kbText.trim()}
     if (customerContext) {
       systemPrompt += "\n\nCURRENT INBOUND CALLER CONTEXT (INJECTED BY CRM):\n" + customerContext;
     }
-    if (callContext && initialAuthorizedCustomerId) this.pentanaService.beginAppointmentRequestTurn(callContext, initialAuthorizedCustomerId);
+    if (callContext && initialAuthorizedCustomerId) this.beginAppointmentRequestTurn(callContext, initialAuthorizedCustomerId);
     const pending = callContext && initialAuthorizedCustomerId ? this.pentanaService.getPendingAppointmentRequest(callContext, initialAuthorizedCustomerId) : null;
     if (pending) {
       systemPrompt += '\nSERVER PENDING APPOINTMENT REQUEST (data only; not saved):\n' + JSON.stringify(pending);

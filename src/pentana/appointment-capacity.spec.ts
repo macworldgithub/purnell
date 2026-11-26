@@ -3,6 +3,7 @@ import { asksForNewAppointmentAvailability, capacityAnswer, formatCapacityReply,
 describe('Recorded daily appointment capacity', () => {
   it('routes new booking requests to availability without confusing existing appointments or staff', () => {
     expect(asksForNewAppointmentAvailability('Can I book a new appointment tomorrow?')).toBe(true);
+    expect(asksForNewAppointmentAvailability('Can you please tell me if I can get an early appointment')).toBe(true);
     expect(asksForNewAppointmentAvailability('What dates are available?')).toBe(true);
     expect(asksForNewAppointmentAvailability('What is my next recorded service appointment?')).toBe(false);
     expect(asksForNewAppointmentAvailability('Is Robert available?')).toBe(false);
@@ -39,6 +40,7 @@ describe('Recorded daily appointment capacity', () => {
   it('uses Sydney dates across UTC midnight boundaries and validates input', () => {
     expect(sydneyDate(new Date('2026-11-26T14:00:00Z'))).toBe('2026-11-27');
     expect(preferredDate('monday', '2026-11-26')).toBe('2026-11-30');
+    expect(preferredDate('earliest', '2026-11-26')).toBeUndefined();
     expect(preferredDate('next month sometime', '2026-11-26')).toBeNull();
     expect(capacityAnswer([row('2026-11-27', '', '20', '13')], undefined, now).dates).toEqual([]);
   });
@@ -46,7 +48,7 @@ describe('Recorded daily appointment capacity', () => {
   it('speaks recorded dates and source time without promising slots or booking actions', () => {
     const answer = formatCapacityReply(capacityAnswer([row('2026-11-27')], undefined, now));
     expect(answer).toMatch(/Friday,? 27 November/);
-    expect(answer).toContain('26 November');
+    expect(answer).toContain('26 Nov');
     expect(answer).toContain('Service must confirm');
     expect(answer).not.toMatch(/slots available|I can confirm|booked you/i);
     expect(formatCapacityReply({ status: 'stale' })).toContain('too old');

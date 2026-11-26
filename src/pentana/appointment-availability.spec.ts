@@ -21,6 +21,15 @@ describe('Voice appointment capacity integration', () => {
     expect(result.dates).toEqual([]);
   });
 
+  it('checks the earliest dates for an early appointment rather than an inferred tomorrow', async () => {
+    const adapter = { getAvailability: jest.fn().mockResolvedValue({ status: 'dates_with_capacity', dates: [] }) };
+    const service = new OpenAiService(new PentanaService(adapter as unknown as AppointmentAvailabilityService), {} as CustomerDatabaseService);
+    await service.executeToolCall('queryAppointmentSlots', { preferredDay: 'tomorrow' }, 'verified-customer', { callId: 'test', turnId: 'turn', callerText: 'Can you please tell me if I can get an early appointment' });
+    expect(adapter.getAvailability).toHaveBeenLastCalledWith(undefined);
+    await service.executeToolCall('queryAppointmentSlots', { preferredDay: 'tomorrow' }, 'verified-customer', { callId: 'test', turnId: 'turn', callerText: 'Can I get an early appointment tomorrow?' });
+    expect(adapter.getAvailability).toHaveBeenLastCalledWith('tomorrow');
+  });
+
   it('returns the factual capacity reply without a second model pass inventing times', async () => {
     const adapter = { getAvailability: jest.fn().mockResolvedValue({ status: 'dates_with_capacity', dates: [{ date: '2026-11-27' }], checkedAt: '2026-11-26T08:00:00Z' }) };
     const service = new OpenAiService(new PentanaService(adapter as unknown as AppointmentAvailabilityService), {} as CustomerDatabaseService);
@@ -28,7 +37,7 @@ describe('Voice appointment capacity integration', () => {
     (service as any).openai.chat.completions.create = create;
     const result = await service.generateResponse([{ role: 'user', content: 'What service dates have capacity?' }], '', 'verified-test-customer');
     expect(create).toHaveBeenCalledTimes(1);
-    expect(result.text).toContain('daily Service capacity');
+    expect(result.text).toContain('Recorded capacity');
     expect(result.text).toContain('Service must confirm');
     expect(result.timings.toolCalls?.map(t => t.name)).toContain('queryAppointmentSlots');
   });
@@ -41,7 +50,7 @@ describe('Voice appointment capacity integration', () => {
     const result = await service.generateResponse([{ role: 'user', content: 'Can I book a new appointment tomorrow?' }], '', 'verified-customer');
     expect(create.mock.calls[0][0].tool_choice.function.name).toBe('queryAppointmentSlots');
     expect(adapter.getAvailability).toHaveBeenCalledWith('tomorrow');
-    expect(result.text).toContain('preferred drop-off time');
+    expect(result.text).toContain('What time would you prefer?');
     expect(result.text).not.toContain('cannot check');
   });
 });

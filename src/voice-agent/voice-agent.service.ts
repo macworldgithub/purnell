@@ -170,12 +170,14 @@ export class VoiceAgentService {
     if (profile && call) call.customerId = profile.customer.customer_id;
     let newlyVerified: string | undefined;
     const direct = profile ? appointmentReply(profile, userText) : null;
+    const callContext = callToken ? { callId: callToken, turnId: randomUUID(), callerText: userText } : undefined;
+    if (direct && profile && callContext) this.openAiService.beginAppointmentRequestTurn(callContext, profile.customer.customer_id);
     const result = direct ? { text: direct, toolLogs: [], timings: undefined } : await this.openAiService.generateResponse(
       messages.map(({ role, content }) => ({ role, content })),
       customerContext,
       profile?.customer.customer_id,
       id => { newlyVerified = id; if (call) call.customerId = id; },
-      callToken ? { callId: callToken, turnId: randomUUID(), callerText: userText } : undefined,
+      callContext,
     );
     if (newlyVerified && !profile) {
       result.text = 'Thanks, I’ve verified your account. How can I help?';

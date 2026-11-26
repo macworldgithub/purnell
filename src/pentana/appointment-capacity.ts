@@ -1,6 +1,12 @@
 export const CAPACITY_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
+export function asksForEarliestAppointmentDates(text: string): boolean {
+  return /\b(early|earlier|sooner|earliest|soonest)\b/i.test(text) &&
+    !/\d|\b(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(text);
+}
+
 export function asksForNewAppointmentAvailability(text: string): boolean {
+  if (/\b(can|could|get|want|need|find|have)\b.*\b(early|earlier|sooner)\s+(?:service\s+)?(?:appointment|booking|date)\b/i.test(text)) return true;
   if (/\b(existing|recorded|reference|cancel|reschedule)\b|\bmy next\b|\bwhen is my\b/i.test(text)) return false;
   return /\bslots\b/i.test(text) || /\b(availability|available|openings)\b/i.test(text) && /\b(appointments?|service|booking|dates?|times?)\b/i.test(text) || /\b(can|could|may)\s+i\s+(?:please\s+)?(?:book|schedule|arrange)\b/i.test(text) || /\b(?:want|need|would like)\s+to\s+(?:book|schedule)\s+(?:a\s+)?(?:new\s+)?(?:appointment|service)\b/i.test(text);
 }
@@ -14,6 +20,7 @@ export function sydneyDate(now: Date): string {
 export function preferredDate(value: string | undefined, today: string): string | null | undefined {
   if (!value?.trim()) return undefined;
   const text = value.trim().toLowerCase();
+  if (/^(early|earlier|earliest|soonest|sooner|asap|as soon as possible|next available|any)$/.test(text)) return undefined;
   const add = (days: number) => new Date(Date.parse(today + 'T00:00:00Z') + days * 86400000).toISOString().slice(0, 10);
   if (text === 'today') return today;
   if (text === 'tomorrow') return add(1);
@@ -68,8 +75,8 @@ export function formatCapacityReply(result: { status?: string; checkedAt?: strin
     return messages[result.status || ''] || messages.unavailable;
   }
   const dateFormat = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', weekday: 'long', day: 'numeric', month: 'long' });
-  const dates = result.dates.slice(0, 3).map(row => dateFormat.format(new Date(row.date + 'T12:00:00+11:00')));
-  const list = dates.length > 1 ? dates.slice(0, -1).join(', ') + ' and ' + dates.at(-1) : dates[0];
-  const checked = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' }).format(new Date(result.checkedAt));
-  return `The diary checked on ${checked} shows daily Service capacity on ${list}. Which date and preferred drop-off time would you like to request? Service must confirm the time and job availability; no booking is confirmed yet.`;
+  const dates = result.dates.slice(0, 2).map(row => dateFormat.format(new Date(row.date + 'T12:00:00+11:00')));
+  const list = dates.length > 1 ? dates.join(' or ') : dates[0];
+  const checked = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(result.checkedAt));
+  return `Recorded capacity: ${list} (checked ${checked}). ${dates.length === 1 ? 'What time would you prefer?' : 'Which date and time would you prefer?'} Service must confirm.`;
 }

@@ -6,11 +6,12 @@ import { VoiceAgentService } from './voice-agent.service';
 describe('VoiceAgentService GPT-Live backend', () => {
   let service: VoiceAgentService;
   let customerDatabase: { getFullCustomerProfile: any };
-  let openAi: { generateResponse: any };
+  let openAi: { generateResponse: any; beginAppointmentRequestTurn: any };
 
   beforeEach(async () => {
     customerDatabase = { getFullCustomerProfile: jest.fn() };
     openAi = {
+      beginAppointmentRequestTurn: jest.fn(),
       generateResponse: jest.fn().mockResolvedValue({
         text: 'I can help with that.',
         toolLogs: [],
@@ -88,6 +89,16 @@ describe('VoiceAgentService GPT-Live backend', () => {
       expect.any(Function),
       undefined,
     );
+  });
+
+  it('advances request confirmation state even when a recorded appointment uses the direct answer', async () => {
+    customerDatabase.getFullCustomerProfile.mockResolvedValue({ customer: { customer_id: 'C1', customer_name: 'Test Customer', vehicles: [{ rego: 'TEST01' }] }, service_bookings: [{ booking_id: '123', vehicle_rego: 'TEST01', date: '27/11/2026', time: '09:00', job_type: 'Service' }] });
+    const token = service.createCall('0400000001');
+    const result = await service.processTextMessage('What is my recorded appointment?', [], '', token);
+    expect(result.text).toContain('27 November 2026');
+    expect(result.text).not.toContain('1 2 3');
+    expect(openAi.generateResponse).not.toHaveBeenCalled();
+    expect(openAi.beginAppointmentRequestTurn).toHaveBeenCalledWith(expect.objectContaining({ callId: token, callerText: 'What is my recorded appointment?' }), 'C1');
   });
 
   it('delegates text to the configured reasoning model without generating speech', async () => {
