@@ -35,7 +35,7 @@ class LiveVoiceAgent {
     this.cliInput = document.getElementById('cliInput');
     this.normalizedBadge = document.getElementById('normalizedBadge');
 
-    document.getElementById('clearBtn').addEventListener('click', () => this.clearTranscript());
+    document.getElementById('clearBtn')?.addEventListener('click', () => this.clearTranscript());
     this.playBtn.addEventListener('click', () => this.toggleCall());
     this.cliInput.addEventListener('input', () => this.updateCliBadge());
     this.updateCliBadge();
@@ -347,6 +347,7 @@ class LiveVoiceAgent {
   }
 
   addTranscript(role, text) {
+    if (!this.transcriptBox) return;
     const entry = document.createElement('div');
     entry.className = `transcript-entry ${role}`;
     const label = document.createElement('span');
@@ -360,7 +361,7 @@ class LiveVoiceAgent {
   }
 
   clearTranscript() {
-    this.transcriptBox.replaceChildren();
+    this.transcriptBox?.replaceChildren();
     this.history = [];
     this.pendingUserTranscript = '';
     this.lastUserTurn = '';
