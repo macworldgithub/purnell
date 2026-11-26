@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { CustomerDatabaseService, FullCustomerProfile } from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
 import { OpenAiService } from '../openai/openai.service';
+import { appointmentReply } from './grounded-appointment';
 
 const digitsToWords = (value: string): string => value.split('').join(' ');
 
@@ -168,7 +169,8 @@ export class VoiceAgentService {
     const llmStartedAt = Date.now();
     if (profile && call) call.customerId = profile.customer.customer_id;
     let newlyVerified: string | undefined;
-    const result = await this.openAiService.generateResponse(
+    const direct = profile ? appointmentReply(profile, userText) : null;
+    const result = direct ? { text: direct, toolLogs: [], timings: undefined } : await this.openAiService.generateResponse(
       messages.map(({ role, content }) => ({ role, content })),
       customerContext,
       profile?.customer.customer_id,

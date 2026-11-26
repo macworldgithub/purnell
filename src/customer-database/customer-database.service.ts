@@ -257,6 +257,27 @@ export class CustomerDatabaseService {
         authorised_contacts,
       };
 
+      const current = await this.customerModel.db.collection('erapower_current_appointments').find({
+        'data.custno': customerId, listed_in_latest_report: true,
+      }).toArray();
+      if (current.length) {
+        const grouped = new Map<string, ServiceBooking>();
+        for (const row of current) {
+          const d = row.data as Record<string, string>;
+          if (!d?.appt_no) continue;
+          const key = [d.appt_no, d.serial_no, d.date_in, d.in].join(':');
+          const work = (d.op_code_description || '').split(/\([+-]\)/)[0].trim();
+          const existing = grouped.get(key);
+          if (existing) {
+            if (work && !existing.job_type.includes(work)) existing.job_type += '; ' + work;
+          } else grouped.set(key, {
+            booking_id: d.appt_no, customer_id: customerId, vehicle_rego: d.rego_no,
+            date: d.date_in, time: d.in, job_type: work || 'Description unavailable',
+            notes: 'Snapshot: ' + String(row.observed_at),
+          } as ServiceBooking);
+        }
+        profile.service_bookings = [...grouped.values()];
+      }
       const now = Date.now();
       const expiry = now + this.CACHE_TTL_MS;
       this.profileCache.set(cacheKey, { profile, expiry });
