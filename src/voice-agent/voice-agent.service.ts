@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
+import { randomUUID } from 'crypto';
 import { CustomerDatabaseService, FullCustomerProfile } from '../customer-database/customer-database.service';
 import { normalizeAustralianPhone } from '../common/utils/phone-normalizer';
 import { OpenAiService } from '../openai/openai.service';
@@ -34,6 +35,14 @@ interface LiveDelegationTimings {
 
 @Injectable()
 export class VoiceAgentService {
+  private readonly calls = new Map<string, { cli: string; customerId?: string; expires: number }>();
+
+  createCall(cli: string): string {
+    for (const [key, value] of this.calls) if (value.expires < Date.now()) this.calls.delete(key);
+    const id = randomUUID();
+    this.calls.set(id, { cli: normalizeAustralianPhone(cli), expires: Date.now() + 60 * 60 * 1000 });
+    return id;
+  }
   private readonly logger = new Logger(VoiceAgentService.name);
 
   constructor(
@@ -80,9 +89,23 @@ export class VoiceAgentService {
     const vehicles = (customer.vehicles || []).map((vehicle) =>
       `- ${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''} (Rego: ${vehicle.rego || 'N/A'}, VIN: ${vehicle.vin || 'N/A'}, Colour: ${vehicle.colour || 'N/A'})`,
     ).join('\n  ');
-    const repairOrders = (profile.repair_orders || []).map((order) =>
-      `- RO #${order.ro_number}: Rego ${order.vehicle_rego} | Status: "${order.status}" | Advisor: ${order.advisor} | Drop-off: ${order.drop_off_date} | Ready for Collection: ${order.ready_for_collection ? 'YES' : 'NO'} | Awaiting Approval: ${order.awaiting_approval ? 'YES' : 'NO'}`,
-    ).join('\n  ');
+    const repairOrders = (profile.repair_orders || []).map((order) => {
+      const imported = order as typeof order & {
+        pentana_snapshot?: string;
+        promised_date?: string;
+        promised_time?: string;
+        source_narratives?: Array<{ complaint?: string; cause?: string; correction?: string }>;
+      };
+      if (imported.pentana_snapshot || imported.source_narratives?.length) {
+        return JSON.stringify({
+          repairOrder: order.ro_number, registration: order.vehicle_rego, advisor: order.advisor,
+          snapshotDate: imported.pentana_snapshot, recordedStatus: order.status,
+          recordedDropOff: order.drop_off_date, historicalPromisedDate: imported.promised_date,
+          historicalPromisedTime: imported.promised_time, notes: imported.source_narratives,
+        });
+      }
+      return `- RO #${order.ro_number}: Rego ${order.vehicle_rego} | Status: "${order.status}" | Advisor: ${order.advisor} | Drop-off: ${order.drop_off_date} | Ready for Collection: ${order.ready_for_collection ? 'YES' : 'NO'} | Awaiting Approval: ${order.awaiting_approval ? 'YES' : 'NO'}`;
+    }).join('\n  ');
     const bookings = (profile.service_bookings || []).map((booking) =>
       `- ${booking.date} at ${booking.time} (${booking.job_type}), Advisor ${booking.advisor}, Rego ${booking.vehicle_rego || 'On file'}`,
     ).join('\n  ');
@@ -121,16 +144,19 @@ export class VoiceAgentService {
     userText: string,
     history: ConversationTurn[] = [],
     cli = '',
+    callToken?: string,
   ): Promise<{
     text: string;
     toolLogs?: string[];
     timings: LiveDelegationTimings;
   }> {
     const startedAt = Date.now();
-    const normalizedCli = normalizeAustralianPhone(cli);
+    const call = callToken ? this.calls.get(callToken) : undefined;
+    if (callToken && (!call || call.expires < Date.now())) throw new Error('Call session expired. Start a new call.');
+    const normalizedCli = call?.cli ?? normalizeAustralianPhone(cli);
     const lookupStartedAt = Date.now();
-    const profile = normalizedCli
-      ? await this.customerDatabaseService.getFullCustomerProfile(normalizedCli)
+    const profile = call?.customerId || normalizedCli
+      ? await this.customerDatabaseService.getFullCustomerProfile(call?.customerId || normalizedCli)
       : null;
     const dbLookupMs = Date.now() - lookupStartedAt;
     const customerContext = this.formatCustomerContext(profile, normalizedCli);
@@ -140,11 +166,19 @@ export class VoiceAgentService {
       messages.push({ role: 'user', content: userText });
     }
     const llmStartedAt = Date.now();
+    if (profile && call) call.customerId = profile.customer.customer_id;
+    let newlyVerified: string | undefined;
     const result = await this.openAiService.generateResponse(
       messages.map(({ role, content }) => ({ role, content })),
       customerContext,
-      profile?.customer?.customer_id,
+      profile?.customer.customer_id,
+      id => { newlyVerified = id; if (call) call.customerId = id; },
     );
+    if (newlyVerified && !profile) {
+      result.text = 'Thanks, I’ve verified your account. How can I help?';
+    } else if (!profile) {
+      result.text = 'Please provide the customer full name and vehicle registration so I can verify the account before sharing any records.';
+    }
     const timings = {
       dbLookupMs,
       llmTotalMs: Date.now() - llmStartedAt,

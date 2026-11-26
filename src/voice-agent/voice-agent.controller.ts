@@ -35,7 +35,8 @@ export class VoiceAgentController {
       const callerContext = await this.voiceAgentService.getLiveCallerContext(cli || '');
       const session = await this.openAiService.createLiveSession(sdp, callerContext);
       this.logger.log(`GPT-Live-1 session created (sessionId: ${session.session.id}).`);
-      return { success: true, session: session.session, transport: session.transport };
+      const callToken = this.voiceAgentService.createCall(cli || '');
+      return { success: true, session: session.session, transport: session.transport, callToken };
     } catch (error) {
       this.logger.error('GPT-Live-1 session creation failed.', error);
       throw new BadGatewayException(
@@ -49,6 +50,7 @@ export class VoiceAgentController {
     @Body('message') message: string,
     @Body('history') history?: ConversationTurn[],
     @Body('cli') cli?: string,
+    @Body('callToken') callToken?: string,
   ) {
     if (!message?.trim()) {
       throw new BadRequestException('A transcript is required for delegation.');
@@ -57,7 +59,8 @@ export class VoiceAgentController {
     const startedAt = Date.now();
     this.logger.log(`Delegation received (transcriptCharacters: ${message.trim().length}).`);
     try {
-      const result = await this.voiceAgentService.processTextMessage(message, history || [], cli || '');
+      if (!callToken) throw new BadRequestException('A call session token is required.');
+      const result = await this.voiceAgentService.processTextMessage(message, history || [], cli || '', callToken);
       const toolSummary = (result.timings?.toolCalls || [])
         .map(({ name, durationMs }) => `${name}:${durationMs}ms`)
         .join(', ') || 'none';

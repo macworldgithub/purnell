@@ -110,6 +110,7 @@ class LiveVoiceAgent {
         }),
       });
       const result = await response.json();
+      this.callToken = result.callToken;
       this.log('Session creation response', { httpStatus: response.status, success: Boolean(result.success) });
       if (!response.ok || !result.success || !result.transport?.sdp) {
         throw new Error(result.message || 'Could not create the GPT-Live-1 session.');
@@ -266,6 +267,7 @@ class LiveVoiceAgent {
         body: JSON.stringify({
           message,
           history: this.history,
+          callToken: this.callToken,
           cli: normalizeAustralianPhone(this.cliInput.value),
         }),
       });

@@ -242,6 +242,13 @@ export class CustomerDatabaseService {
         this.authorisedContactModel.findOne({ customer_id: customerId }).lean(),
       ]);
 
+      const narrativeCollection = this.repairOrderModel.db.collection('pentana_repair_job_narratives');
+      const narratives = await narrativeCollection.find({
+        ro_number: { $in: repair_orders.map(order => order.ro_number) },
+      }).toArray();
+      for (const order of repair_orders) {
+        Object.assign(order, { source_narratives: narratives.filter(n => n.ro_number === order.ro_number) });
+      }
       const profile: FullCustomerProfile = {
         customer,
         repair_orders,

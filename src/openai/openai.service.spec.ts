@@ -71,6 +71,21 @@ describe('OpenAiService privacy verification', () => {
     expect(JSON.stringify(result)).not.toContain('BCD890');
   });
 
+  it('accepts a spoken company suffix but still rejects the wrong registration and account name', async () => {
+    const company = { ...nameProfile, customer: { ...nameProfile.customer,
+      customer_name: 'Construction Machinery Australia Pty Limited',
+      vehicles: [{ rego: 'KLP' }],
+    } };
+    const db = { getFullCustomerProfile: jest.fn().mockResolvedValue(company) } as unknown as CustomerDatabaseService;
+    const service = new OpenAiService({} as PentanaService, db);
+    const verify = async (customerName: string, registration: string) =>
+      JSON.parse(await service.executeToolCall('verifyPentanaCustomer', { customerName, registration }));
+    expect((await verify('Construction Machinery Australia Private Limited', 'K L P')).verified).toBe(true);
+    expect((await verify('Construction Machinery Australia Private Limited', 'KL')).verified).toBe(false);
+    expect((await verify('Construction Machinery', 'KLP')).verified).toBe(false);
+    expect((await verify('Different Company Private Limited', 'KLP')).verified).toBe(false);
+  });
+
   it('returns the profile only when both factors resolve to the same record', async () => {
     const customerDatabaseService = {
       getFullCustomerProfile: jest.fn().mockResolvedValue(nameProfile),

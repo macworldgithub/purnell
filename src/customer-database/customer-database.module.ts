@@ -27,7 +27,9 @@ if (!mongoUri) {
 
 @Module({
   imports: [
-    MongooseModule.forRoot(mongoUri),
+    MongooseModule.forRoot(mongoUri, {
+      dbName: process.env.MONGO_DB_NAME || 'Purnell_Pentana_VoiceAgent',
+    }),
     MongooseModule.forFeature([
       { name: Customer.name, schema: CustomerSchema },
       { name: RepairOrder.name, schema: RepairOrderSchema },
